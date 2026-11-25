@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "robotic-suite-cli"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["robotic-inference-sdk>=0.1,<0.2"]
+[project.scripts]
+rsctl = "rsctl.cli:main"
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["rsctl*"]
+namespaces = false
+[tool.setuptools.package-data]
+rsctl = ["assets/**/*", "assets/**/resource/*"]
+
+[tool.setuptools.exclude-package-data]
+rsctl = ["**/__pycache__/*", "**/*.pyc"]

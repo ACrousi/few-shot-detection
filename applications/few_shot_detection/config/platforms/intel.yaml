@@ -1,0 +1,14 @@
+# Planning profile only: application implementation unavailable; startup fails explicitly.
+platform: intel
+pipeline: dinov3_cases.platforms.intel.pipeline
+models:
+  sam3:
+    artifact: ../../artifacts/intel/sam3.xml
+  cat2real:
+    artifact: ../../artifacts/intel/cat2real.xml
+operations:
+  roi: cpu
+  plane: cpu
+execution:
+  sam3: subprocess
+  timeout: 60.0

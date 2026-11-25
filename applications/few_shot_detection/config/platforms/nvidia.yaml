@@ -1,0 +1,13 @@
+# Implemented NVIDIA stages.
+platform: nvidia
+pipeline: dinov3_cases.platforms.nvidia.pipeline
+models:
+  sam3:
+    artifact: ../../artifacts/sam3/vision-fp16-native.ts
+  cat2real:
+    artifact: ../../artifacts/cat2real-dinov3-384/cat2real-fp32-batch8-trt.ts
+operations:
+  roi: cuda
+execution:
+  sam3: subprocess
+  timeout: 60.0

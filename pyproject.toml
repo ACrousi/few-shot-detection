@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+testpaths = ["packages/robotic_inference_sdk/tests", "tests"]
+markers = ["hardware: optional target runtime tests"]
+addopts = "-ra"

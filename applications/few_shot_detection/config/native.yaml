@@ -1,0 +1,7 @@
+# Application configuration, not the SDK tensor model schema.
+platform_config: platforms/nvidia.yaml
+prompt: 'box, can.'
+box_threshold: 0.6
+recognition_threshold: 0.6
+max_detections: 20
+gallery: ../data/gallery

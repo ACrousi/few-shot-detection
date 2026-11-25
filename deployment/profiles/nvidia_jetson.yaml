@@ -1,0 +1,23 @@
+name: nvidia
+architectures:
+- aarch64
+runtime: tensorrt
+requirements:
+- Target JetPack/L4T matching the Jetson board
+- TensorRT and CUDA matching host JetPack
+- NVIDIA container runtime and GPU device access
+- User-supplied compatible ROS 2 development base image
+environment: []
+devices:
+- /dev/nvhost-ctrl
+- /dev/nvidia0
+os: Linux
+python_min: '3.10'
+ros_distros:
+- humble
+- jazzy
+dockerfile: Dockerfile.nvidia
+python_environment:
+  requirements: nvidia.txt
+  system_site_packages: false
+  runtime_source: target SDK; no automatic vendor runtime installation

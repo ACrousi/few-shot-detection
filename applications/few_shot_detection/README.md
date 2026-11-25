@@ -1,0 +1,33 @@
+# SAM3 + Cat2Real
+
+獨立的 ROS 2／HTTP 商品辨識專案，模型與 Python 環境均位於此目錄。
+
+- SAM3：官方 Torch-TensorRT FP16 vision + 官方 Transformers PyTorch FP16 bbox head，支援 1–4 個文字類別。
+- 追蹤：OpenCV CPU KCF；每個物件一個 tracker，SAM3 定期更新。統一安裝：`bash setup_all.sh`。
+- Cat2Real：`zhanganyi88/Cat2Real-DINOv3-384`，官方 Torch-TensorRT FP32，384×384、1024 維 pooler 向量。
+- 圖庫：`data/gallery/`；模型：`artifacts/`；Python：`.venv/`。
+- 即時影像：共用 960×540 ROS Image `/medicine_recognition/image_annotated`；網頁訂閱相同 topic，透過 JPEG／MJPEG 顯示。詳見 [影像介面](src/dinov3_cases/docs/runtime.md#共用-ros-image-即時影像)。
+
+```bash
+# 在本目錄執行；現有環境與模型已遷入
+bash run.sh
+
+# 新環境：在 Isaac ROS 容器內，以工作區使用者執行
+bash setup_all.sh
+
+# 下載並建置模型（SAM3 需先取得存取權並登入 Hugging Face）
+.venv/bin/python build_models.py --download
+
+# 只驗證既有模型
+.venv/bin/python build_models.py --validate-only
+```
+
+開啟 <http://127.0.0.1:8090>。ROS Jazzy、CUDA driver、相機驅動與 ROS 訊息套件需由系統提供；模型建置與推論不依賴相鄰的模型專案。SAM3 首次下載需要 Hugging Face 官方存取權；已有本機模型可離線執行。
+
+`setup_all.sh` 安裝 Python 環境、檢查 KCF，並只編譯目前 NVIDIA 模型流程需要的 CUDA geometry。單獨更新 Python 環境可執行 `bash setup_env.sh`。
+
+套件清單：[requirements.txt](requirements.txt)、[Thor pins](constraints-thor.txt)。完整操作與排程說明見 [BUILD_GUIDE.md](BUILD_GUIDE.md)。
+
+程式責任與資料流程見 [程式導覽](src/dinov3_cases/README.md)，檢查指令見 [測試說明](tests/README.md)。模型建置統一使用 `build_models.py`。
+
+更新 native 程式後，在容器內執行 `bash applications/few_shot_detection/native/build.sh`（從工作區根目錄）；不需重裝依賴。詳見 [原生建置說明](BUILD_GUIDE.md#gpu-延遲優化)。

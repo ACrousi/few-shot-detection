@@ -1,0 +1,4 @@
+application:
+  name: ros2_perception_demo
+platform: nvidia
+pipeline: ros2_perception_demo.platforms.nvidia.pipeline

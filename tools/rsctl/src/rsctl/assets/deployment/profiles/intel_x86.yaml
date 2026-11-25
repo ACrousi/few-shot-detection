@@ -1,0 +1,21 @@
+name: intel
+architectures:
+- x86_64
+runtime: openvino
+requirements:
+- OpenVINO runtime; CPU or separately installed GPU/NPU drivers
+- Explicit device selection, e.g. CPU
+- User-supplied ROS 2 development base image
+environment: []
+devices:
+- /dev/dri/renderD128
+os: Linux
+python_min: '3.10'
+ros_distros:
+- humble
+- jazzy
+dockerfile: Dockerfile.intel
+python_environment:
+  requirements: intel.txt
+  system_site_packages: false
+  runtime_source: pip

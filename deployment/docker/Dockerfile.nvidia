@@ -1,0 +1,16 @@
+# Planning scaffold: pass a validated target-specific ROS development image.
+# Does not install host drivers, proprietary SDKs, or compile/convert model artifacts.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG APP_NAME
+COPY packages/robotic_inference_sdk /opt/robotic-inference-sdk
+RUN python3 -m venv /opt/inference && /opt/inference/bin/python -m pip install --no-cache-dir /opt/robotic-inference-sdk
+ENV ROBOTIC_INFERENCE_PYTHON=/opt/inference/bin/python
+COPY application /ros_ws/src/${APP_NAME}
+WORKDIR /ros_ws
+# Base image must contain rosdep-resolved app dependencies and colcon.
+RUN /bin/bash -c 'source /opt/ros/$ROS_DISTRO/setup.bash && colcon build --packages-select "${APP_NAME}"'
+RUN /opt/inference/bin/python -m pip install --no-cache-dir /ros_ws/src/${APP_NAME}
+# Install target AI requirements into /opt/inference separately; no system-site-packages.
+# Runtime launch and device flags must be supplied for the specific application/board.
+CMD ["/bin/bash"]

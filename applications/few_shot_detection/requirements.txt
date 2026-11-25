@@ -1,0 +1,19 @@
+# Official SAM3 + Cat2Real deployment. Thor pins: -c constraints-thor.txt
+# Install CUDA-compatible torch/torchvision wheels first; see BUILD_GUIDE.md.
+numpy>=1.26.4,<2
+opencv-contrib-python>=4.8,<4.12
+open3d>=0.20,<0.21
+scipy>=1.11
+Pillow>=10
+Flask>=3,<4
+Werkzeug>=3,<4
+
+torch>=2.14,<2.15
+torchvision>=0.29,<0.30
+torch-tensorrt>=2.14,<2.15
+tensorrt>=11.1,<11.2
+tensorrt-cu13>=11.1,<11.2
+transformers>=5.2,<5.3
+huggingface-hub>=1,<2
+safetensors>=0.8,<1
+ftfy>=6,<7

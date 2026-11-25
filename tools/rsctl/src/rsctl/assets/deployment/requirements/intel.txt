@@ -1,0 +1,2 @@
+# Recipe, not a target-certified lock. Capture resolved versions after validation.
+openvino>=2024.0

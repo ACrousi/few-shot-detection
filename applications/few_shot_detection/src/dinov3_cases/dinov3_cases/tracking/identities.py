@@ -1,0 +1,224 @@
+"""Geometric history matching and moving averages for SAM3/KCF boxes."""
+
+from collections import deque
+import math
+import time
+
+
+def _iou(a, b):
+    intersection = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(
+        0, min(a[3], b[3]) - max(a[1], b[1])
+    )
+    union = ((a[2] - a[0]) * (a[3] - a[1])
+             + (b[2] - b[0]) * (b[3] - b[1]) - intersection)
+    return intersection / union if union > 0 else 0.0
+
+
+def match_objects(previous, current):
+    """Conservative one-to-one association in a common frame's coordinates.
+
+    Nearby centers allow modest detector corrections, but size and distance
+    gates prevent a neighboring object from inheriting an unrelated tracker.
+    Recognition labels are deliberately not identities (two items can match).
+    """
+    candidates = []
+    for old_index, old in enumerate(previous):
+        a = old["bbox"]
+        aw, ah = a[2] - a[0], a[3] - a[1]
+        if min(aw, ah) <= 0:
+            continue
+        for index, item in enumerate(current):
+            b = item["bbox"]
+            bw, bh = b[2] - b[0], b[3] - b[1]
+            if min(bw, bh) <= 0 or not .25 <= bw * bh / (aw * ah) <= 4:
+                continue
+            distance = math.hypot((a[0]+a[2]-b[0]-b[2]) / (aw+bw),
+                                  (a[1]+a[3]-b[1]-b[3]) / (ah+bh))
+            overlap = _iou(a, b)
+            if overlap >= .2 or distance <= .5:
+                candidates.append((overlap, -distance, old_index, index))
+    matches, used = {}, set()
+    for _, _, old_index, index in sorted(candidates, reverse=True):
+        if old_index not in used and index not in matches:
+            matches[index] = old_index
+            used.add(old_index)
+    return matches
+
+
+def contained_track_ids(items, threshold):
+    """Suppress smaller current boxes, using intersection / smaller-box area.
+
+    Recompute areas from tracked coordinates; seed-frame area may be stale.
+    Equal-area duplicates prefer the higher detection score, then input order.
+    """
+    if threshold == 0:
+        return set()
+    def area(item):
+        x0, y0, x1, y1 = item["bbox"]
+        return max(0, x1-x0) * max(0, y1-y0)
+
+    kept, retired = [], set()
+    for item in sorted(items, key=lambda item: (area(item), item.get("detection_score", 0)),
+                       reverse=True):
+        a, size = item["bbox"], area(item)
+        for other in kept:
+            b = other["bbox"]
+            intersection = max(0, min(a[2], b[2])-max(a[0], b[0])) * max(
+                0, min(a[3], b[3])-max(a[1], b[1]))
+            if size > 0 and intersection / size >= threshold:
+                retired.add(item["track_id"])
+                break
+        else:
+            kept.append(item)
+    return retired
+
+
+class TrackIdentities:
+    """Keep IDs across refreshes and briefly remember lost, undisplayed items."""
+
+    def __init__(self, recovery_seconds=1.0):
+        self.recovery_seconds = recovery_seconds
+        self.next_id = 0
+        self.clear()
+
+    def clear(self):
+        # IDs must not be recycled when camera/settings context changes.
+        self.recent = {}
+        self.recognized = set()
+
+    def forget(self, identities):
+        self.recognized.difference_update(identities)
+        for identity in identities:
+            self.recent.pop(identity, None)
+
+    def retire_unknown(self, items):
+        """Retire known-to-unknown transitions after association, including recovery.
+
+        An initially unknown object is allowed until it has a known label.
+        Missing labels (unclassified proposals) do not count as unknown.
+        """
+        retired = {item["track_id"] for item in items
+                   if item.get("label") == "unknown"
+                   and item["track_id"] in self.recognized}
+        self.recognized.update(item["track_id"] for item in items
+                               if item.get("label") and item["label"] != "unknown")
+        self.forget(retired)
+        return retired
+
+    def observe(self, items):
+        now = time.monotonic()
+        self.recent = {key: value for key, value in self.recent.items()
+                       if now - value[1] <= self.recovery_seconds}
+        for item in items:
+            self.recent[item["track_id"]] = (dict(item, bbox=list(item["bbox"])), now)
+        self.recognized.intersection_update(self.recent)
+
+    def assign(self, items, live):
+        self.observe(live)
+        matches = match_objects(live, items)
+        live_ids = {item["track_id"] for item in live}
+        lost = [item for key, (item, _) in self.recent.items() if key not in live_ids]
+        unmatched = [index for index in range(len(items)) if index not in matches]
+        recovered = match_objects(lost, [items[index] for index in unmatched])
+        identities = {index: live[old]["track_id"] for index, old in matches.items()}
+        identities.update({unmatched[index]: lost[old]["track_id"]
+                           for index, old in recovered.items()})
+        output = []
+        for index, item in enumerate(items):
+            identity = identities.get(index)
+            if identity is None:
+                self.next_id += 1
+                identity = self.next_id
+            output.append(dict(item, track_id=identity))
+        self.observe(output)
+        return output, matches
+
+
+class BBoxSmoother:
+    """Average raw boxes per matched object without feeding smoothing into the tracker.
+
+    Match geometrically across SAM3 refreshes, including detection reordering.
+    Missing objects lose their history immediately. A repeated frame with the
+    same raw boxes reuses its result; a same-frame correction replaces samples
+    so gallery refreshes and detector handoffs cannot bias the average.
+    """
+
+    def __init__(self, window=0.1):
+        if isinstance(window, bool) or not isinstance(window, (int, float)) or not math.isfinite(window) or window < 0:
+            raise ValueError("bbox_smoothing_seconds must be finite seconds >= 0.")
+        self.window = window
+        self.context = None
+        self.frame_key = None
+        self.histories = {}
+        self.boxes = []
+        self.raw_boxes = None
+        self.track_ids = None
+        self.initialized = False
+
+    def update(self, items, frame_key, context, *, now=None):
+        now = time.monotonic() if now is None else now
+        if not self.initialized or context != self.context:
+            self.histories.clear()
+            self.initialized = False
+            self.context = context
+        raw_boxes = tuple(tuple(item["bbox"]) for item in items)
+        track_ids = tuple(item.get("track_id") for item in items)
+        same_frame = self.initialized and frame_key == self.frame_key
+        expired_samples = any(len(history) > 1 and now - history[0][0] >= self.window
+                              for history in self.histories.values())
+        if not same_frame or raw_boxes != self.raw_boxes or track_ids != self.track_ids or expired_samples:
+            # A background SAM3 handoff may change count/order on the same frame.
+            # Cache by raw boxes too, so zip below can never truncate new objects.
+            # Prefer object identity; legacy callers still match raw coordinates.
+            matches = _match_boxes(self.raw_boxes or (), raw_boxes) if self.initialized else {}
+            if (self.initialized and all(key is not None for key in track_ids)
+                    and all(key is not None for key in self.track_ids)):
+                previous = {key: index for index, key in enumerate(self.track_ids)}
+                matches = {index: previous[key] for index, key in enumerate(track_ids)
+                           if key in previous}
+            histories, boxes = {}, []
+            for index, bbox in enumerate(raw_boxes):
+                previous = matches.get(index)
+                history = self.histories.get(previous, deque())
+                if same_frame and previous in self.histories:
+                    # Replace this frame's old sample instead of counting it twice.
+                    sample_at, _ = history.pop()
+                else:
+                    sample_at = now
+                history.append((sample_at, bbox))
+                while len(history) > 1 and (self.window == 0 or now - history[0][0] >= self.window):
+                    history.popleft()
+                histories[index] = history
+                mean = [sum(box[i] for _, box in history) / len(history) for i in range(4)]
+                boxes.append([math.floor(mean[0]), math.floor(mean[1]),
+                              math.ceil(mean[2]), math.ceil(mean[3])])
+            self.histories, self.boxes = histories, boxes
+            self.raw_boxes = raw_boxes
+            self.track_ids = track_ids
+            self.frame_key = frame_key
+            self.initialized = True
+        return [dict(item, bbox=list(box), area=(box[2] - box[0]) * (box[3] - box[1]))
+                for item, box in zip(items, self.boxes)]
+
+
+def _match_boxes(previous, current):
+    """Match only adjacent raw box sets for smoothing, without persistent IDs."""
+    def expanded(bbox):
+        x0, y0, x1, y1 = bbox
+        px, py = (x1 - x0) * 0.5, (y1 - y0) * 0.5
+        return (x0 - px, y0 - py, x1 + px, y1 + py)
+
+    candidates = []
+    previous_rois = [expanded(bbox) for bbox in previous]
+    current_rois = [expanded(bbox) for bbox in current]
+    for old_index, old_box in enumerate(previous):
+        for index, bbox in enumerate(current):
+            overlap = _iou(previous_rois[old_index], current_rois[index])
+            if overlap >= 0.2:
+                candidates.append((_iou(old_box, bbox), overlap, old_index, index))
+    matches, used_previous = {}, set()
+    for _, _, old_index, index in sorted(candidates, reverse=True):
+        if old_index not in used_previous and index not in matches:
+            matches[index] = old_index
+            used_previous.add(old_index)
+    return matches

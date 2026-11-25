@@ -1,0 +1,2 @@
+# Install TensorRT/CUDA bindings separately from the matching JetPack SDK.
+# Do not install a generic x86 TensorRT wheel on Jetson.

@@ -1,0 +1,199 @@
+"""Manual capture uses the chosen prompt and crops the exact raw camera frame."""
+import threading
+import time
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import numpy as np
+import pytest
+from PIL import Image
+
+from dinov3_cases.api.web import create_app
+
+
+@pytest.fixture
+def camera(tmp_path):
+    pixels = np.arange(12 * 16 * 3, dtype=np.uint8).reshape(12, 16, 3)
+    calls = []
+    proposals = [dict(bbox=[2, 3, 9, 10], detection_label='box', detection_score=0.9),
+                 dict(bbox=[10, 0, 16, 5], detection_label='box', detection_score=0.8)]
+
+    def validate(prompt):
+        if prompt != 'Detect box.':
+            raise ValueError('Invalid prompt')
+
+    def detect(image, *args, **kwargs):
+        calls.append((np.array(image), args, kwargs))
+        return proposals
+
+    node = SimpleNamespace(
+        root=tmp_path, lock=threading.Lock(), image_changed=threading.Event(),
+        render_changed=threading.Event(), image_stream=Mock(), camera_frame=object(),
+        camera_received_at=time.monotonic(), generation=0,
+        grounding_settings={'prompt': 'Detect bottle.', 'box_threshold': 0.3},
+        grounding_detector=SimpleNamespace(validate_prompt=validate, detect=detect),
+        bridge=SimpleNamespace(imgmsg_to_cv2=lambda frame, desired_encoding: pixels),
+        param=lambda name: {'grounding_max_detections': 20,
+                            'grounding_containment_threshold': .8,
+                            'grounding_min_bbox_width': 0, 'grounding_min_bbox_height': 0,
+                            'grounding_min_bbox_area': 0}[name],
+        clear_object_debug=lambda: None,
+    )
+    app = create_app(node)
+    app.config['TESTING'] = True
+    return app.test_client(), node, calls, proposals, pixels
+
+
+def test_capture_creates_exact_crops_and_refreshes_gallery(camera):
+    client, node, calls, _, pixels = camera
+    assert b'camera-section' in client.get('/images').data
+    assert client.post('/api/images/labels', json={'case': 'medicine'}).status_code == 200
+    response = client.post('/api/images/capture', json={'case': 'medicine', 'prompt': 'Detect box.'})
+    assert response.status_code == 200
+    names = response.json['names']
+    assert len(names) == 2
+    np.testing.assert_array_equal(np.array(Image.open(node.root / 'medicine' / names[0])), pixels[3:10, 2:9])
+    np.testing.assert_array_equal(np.array(Image.open(node.root / 'medicine' / names[1])), pixels[0:5, 10:16])
+    np.testing.assert_array_equal(calls[0][0], pixels)
+    assert calls[0][1] == ('Detect box.', 0.3, 20)
+    assert calls[0][2]['containment_threshold'] == .8
+    assert node.grounding_settings['prompt'] == 'Detect bottle.'
+    assert node.generation == 1
+    assert len(client.get('/api/images?case=medicine').json['images']) == 2
+
+
+def test_no_detections_saves_nothing(camera):
+    client, node, _, proposals, _ = camera
+    proposals.clear()
+    client.post('/api/images/labels', json={'case': 'empty'})
+    response = client.post('/api/images/capture', json={'case': 'empty', 'prompt': 'Detect box.'})
+    assert response.status_code == 200
+    assert response.json['names'] == []
+    assert list((node.root / 'empty').iterdir()) == []
+    assert node.generation == 0
+
+
+def test_roi_filters_boxes_without_cropping_input_or_changing_output_coordinates(camera):
+    from io import BytesIO
+    client, node, calls, proposals, pixels = camera
+    node.sam3_roi = (8, 8, 5, 6)  # [1, 2, 9, 10] contains only the first full bbox.
+    result = client.post('/api/images/camera-preview', json={'prompt': 'Detect box.'})
+    assert result.headers['X-Detection-Count'] == '1'
+    assert Image.open(BytesIO(result.data)).size == (16, 12)
+    np.testing.assert_array_equal(calls[0][0], pixels)
+    client.post('/api/images/labels', json={'case': 'medicine'})
+    result = client.post('/api/images/capture', json={'case': 'medicine', 'prompt': 'Detect box.'})
+    assert result.json['detections'] == [proposals[0]]
+    saved = Image.open(node.root / 'medicine' / result.json['names'][0])
+    np.testing.assert_array_equal(np.array(saved), pixels[3:10, 2:9])
+
+
+@pytest.mark.parametrize('data', [None, [], {}, {'case': '../escape'}, {'case': 'missing', 'prompt': 'Detect box.'},
+                                       {'case': 'valid'}, {'case': 'valid', 'prompt': 5},
+                                       {'case': 'valid', 'prompt': 'unknown'}])
+def test_invalid_capture_rejected_without_inference(camera, data):
+    client, node, calls, _, _ = camera
+    (node.root / 'valid').mkdir()
+    assert client.post('/api/images/capture', json=data).status_code == 400
+    assert calls == []
+    assert list((node.root / 'valid').iterdir()) == []
+
+
+@pytest.mark.parametrize('attribute,value', [('camera_frame', None), ('camera_received_at', None),
+                                            ('camera_received_at', 0), ('grounding_detector', None)])
+def test_unavailable_camera_or_detector(camera, attribute, value):
+    client, node, calls, _, _ = camera
+    (node.root / 'valid').mkdir()
+    setattr(node, attribute, value)
+    response = client.post('/api/images/capture', json={'case': 'valid', 'prompt': 'Detect box.'})
+    assert response.status_code == 503
+    assert response.json['error']
+    assert calls == []
+
+
+def test_label_validation_and_standalone_mode(tmp_path):
+    from dinov3_cases.api.image_manager import create_app as standalone
+    client = standalone(tmp_path).test_client()
+    for label in ['', '../escape', 'a/b']:
+        assert client.post('/api/images/labels', json={'case': label}).status_code == 400
+    assert client.post('/api/images/labels', json={'case': 'valid'}).status_code == 200
+    assert client.post('/api/images/labels', json={'case': 'valid'}).status_code == 200
+    assert client.get('/api/images').json['cases'] == ['valid']
+    assert b'camera-section' not in client.get('/images').data
+    assert client.post('/api/images/capture', json={'case': 'valid', 'prompt': 'Detect box.'}).status_code == 503
+
+
+def test_bbox_preview_uses_selected_prompt_without_saving(camera):
+    from io import BytesIO
+    client, node, calls, proposals, pixels = camera
+    response = client.post('/api/images/camera-preview', json={'prompt': 'Detect box.'})
+    assert response.status_code == 200
+    assert response.mimetype == 'image/png'
+    assert response.headers['X-Detection-Count'] == '2'
+    preview = Image.open(BytesIO(response.data))
+    assert preview.size == (16, 12)
+    assert preview.getpixel((2, 9)) == (141, 220, 196)
+    np.testing.assert_array_equal(calls[0][0], pixels)
+    assert calls[0][1][0] == 'Detect box.'
+    assert list(node.root.iterdir()) == []
+    assert node.generation == 0
+    assert node.grounding_settings['prompt'] == 'Detect bottle.'
+    proposals.clear()
+    response = client.post('/api/images/camera-preview', json={'prompt': 'Detect box.'})
+    assert response.headers['X-Detection-Count'] == '0'
+    np.testing.assert_array_equal(np.array(Image.open(BytesIO(response.data))), pixels)
+
+
+@pytest.mark.parametrize('data', [None, [], {}, {'prompt': ''}, {'prompt': 5}, {'prompt': 'unknown'}])
+def test_bbox_preview_rejects_invalid_prompt(camera, data):
+    client, node, calls, _, _ = camera
+    assert client.post('/api/images/camera-preview', json=data).status_code == 400
+    assert calls == []
+    assert list(node.root.iterdir()) == []
+
+
+@pytest.mark.parametrize('endpoint', ['camera-preview', 'capture'])
+@pytest.mark.parametrize('threshold', [0, 0.75, 1])
+def test_selected_score_threshold_reaches_detector_without_changing_live_settings(camera, endpoint, threshold):
+    client, node, calls, _, _ = camera
+    (node.root / 'medicine').mkdir()
+    response = client.post('/api/images/' + endpoint, json={
+        'case': 'medicine', 'prompt': 'Detect box.', 'box_threshold': threshold,
+    })
+    assert response.status_code == 200
+    assert calls[0][1][1] == threshold
+    assert node.grounding_settings['box_threshold'] == 0.3
+
+
+@pytest.mark.parametrize('endpoint', ['camera-preview', 'capture'])
+@pytest.mark.parametrize('threshold', [-0.01, 1.01, True, None, '0.5', [], float('nan'), float('inf')])
+def test_invalid_score_threshold_rejected_before_inference(camera, endpoint, threshold):
+    client, node, calls, _, _ = camera
+    (node.root / 'medicine').mkdir()
+    response = client.post('/api/images/' + endpoint, json={
+        'case': 'medicine', 'prompt': 'Detect box.', 'box_threshold': threshold,
+    })
+    assert response.status_code == 400
+    assert calls == []
+    assert list((node.root / 'medicine').iterdir()) == []
+
+
+def test_score_slider_initializes_from_live_threshold(camera):
+    client, node, _, _, _ = camera
+    node.grounding_settings['box_threshold'] = 0.67
+    html = client.get('/images').data.decode()
+    assert 'id="camera-threshold" type="range" min="0" max="1" step="0.01" value="0.67"' in html
+
+
+def test_delete_label_invalidates_live_recognition(camera):
+    client, node, *_ = camera
+    folder = node.root / 'medicine'
+    folder.mkdir()
+    (folder / 'reference.png').write_bytes(b'reference')
+    response = client.delete('/api/images/labels/medicine')
+    assert response.status_code == 200
+    assert not folder.exists()
+    assert node.generation == 1
+    node.image_stream.reset.assert_called_once()
+    assert node.image_changed.is_set()
+    assert node.render_changed.is_set()

@@ -1,0 +1,1 @@
+# Provision licensed QAIRT/QNN and native bridge separately on target.

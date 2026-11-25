@@ -1,0 +1,25 @@
+name: qualcomm
+architectures:
+- aarch64
+runtime: qnn
+requirements:
+- Licensed QAIRT/QNN SDK matching board BSP and target ABI
+- Native integration bridge (not implemented in MVP)
+- Target libQnnHtp.so or libQnnCpu.so and matching DSP stubs/skels
+- Separately prepared target context binaries
+- User-supplied compatible ROS 2 development base image
+environment:
+- QNN_SDK_ROOT|QAIRT_SDK_ROOT
+devices:
+- /dev/adsprpc-smd
+- /dev/fastrpc-cdsp
+os: Linux
+python_min: '3.10'
+ros_distros:
+- humble
+- jazzy
+dockerfile: Dockerfile.qualcomm
+python_environment:
+  requirements: qualcomm.txt
+  system_site_packages: false
+  runtime_source: target SDK; no automatic vendor runtime installation

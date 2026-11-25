@@ -1,0 +1,7 @@
+application:
+  name: ros2_perception_demo
+platform: cpu
+pipeline: ros2_perception_demo.platforms.cpu.pipeline
+ros:
+  input_topic: /camera/color/image_raw
+  output_topic: /perception/mock_summary

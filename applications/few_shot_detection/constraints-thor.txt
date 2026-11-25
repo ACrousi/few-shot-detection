@@ -1,0 +1,18 @@
+# Tested: Thor SM110 / aarch64 / Python 3.12 / CUDA 13.0 / ROS Jazzy.
+# These pins constrain an installation; they are not a CUDA wheel index.
+torch==2.14.1
+torchvision==0.29.1
+torch-tensorrt==2.14.0
+tensorrt==11.1.0.106
+tensorrt-cu13==11.1.0.106
+transformers==5.2.0
+numpy==1.26.4
+opencv-contrib-python==4.11.0.86
+open3d==0.20.0
+scipy==1.17.1
+Pillow==12.3.0
+Flask==3.1.3
+Werkzeug==3.1.9
+huggingface-hub==1.33.0
+safetensors==0.8.0
+ftfy==6.3.1

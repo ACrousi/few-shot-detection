@@ -1,0 +1,4 @@
+application:
+  name: ros2_perception_demo
+platform: qualcomm
+pipeline: ros2_perception_demo.platforms.qualcomm.pipeline
