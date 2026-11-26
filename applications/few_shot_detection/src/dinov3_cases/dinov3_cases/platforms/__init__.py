@@ -10,7 +10,5 @@ def load_pipeline(path):
     data = read_yaml(path)
     if data.get('platform') != 'nvidia':
         raise ValueError(f"{data.get('platform')}: few-shot pipeline is not implemented; no fallback")
-    if data.get('pipeline') != 'dinov3_cases.platforms.nvidia.pipeline':
-        raise ValueError('NVIDIA platform requires its own pipeline module')
     from .nvidia.pipeline import Pipeline
-    return Pipeline(path)
+    return Pipeline(path, config=data)

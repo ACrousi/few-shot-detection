@@ -100,7 +100,7 @@ def test_missing_depth_and_empty_frames_do_not_invent_positions(label):
 
 
 def test_publication_worker_publishes_empty_array_to_clear_previous_objects():
-    from dinov3_cases.ros.node import CaseNode
+    from dinov3_cases.ros.node import FewShotDetectionNode
 
     stop = threading.Event()
     tag_pub = Mock()
@@ -117,7 +117,7 @@ def test_publication_worker_publishes_empty_array_to_clear_previous_objects():
         get_logger=lambda: logger,
     )
     node.publish_changed.set()
-    worker = threading.Thread(target=CaseNode.run_publications, args=(node,))
+    worker = threading.Thread(target=FewShotDetectionNode.run_publications, args=(node,))
     worker.start()
     worker.join(3)
     try:

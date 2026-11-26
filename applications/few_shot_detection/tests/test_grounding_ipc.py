@@ -9,7 +9,7 @@ import time
 
 from PIL import Image
 import pytest
-from dinov3_cases.platforms.nvidia.transport import SharedMemoryGroundingDetector
+from dinov3_cases.platforms.nvidia.sam3_worker import SharedMemoryGroundingDetector
 
 
 @pytest.fixture

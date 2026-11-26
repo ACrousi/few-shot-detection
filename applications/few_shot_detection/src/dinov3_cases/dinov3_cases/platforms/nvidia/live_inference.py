@@ -8,10 +8,10 @@ from dinov3_cases.timing import ResultRate
 from dinov3_cases.tracking.async_tracker import AsyncProposals
 from dinov3_cases.inference.sam3_roi import DEFAULT_ROI, roi_bounds, filter_roi
 from .patches import feature_stride
-from .recognition import recognize_objects
+from .gallery_matching import recognize_objects
 from .diagnostics import ObjectVisualizationSnapshot
 
-def run(node, pipeline):
+def run_live_inference(node, pipeline):
     try:
         pipeline.load_models()
         encoder = pipeline.encoder
@@ -62,20 +62,17 @@ def run(node, pipeline):
     for _ in node.worker_ticks():
         shared_frame = None
         with node.lock:
-            gen = node.generation
+            gen, frame, seq = node.generation, node.frame, node.frame_seq
+            source = node.source
+            settings = dict(node.grounding_settings)
+            received_at = node.camera_received_at if source == "camera" else None
+            region = getattr(node, "sam3_roi", DEFAULT_ROI)
         try:
             # Static uploads have no new frames to trigger periodic model jobs.
-            if node.source == "upload" and time.monotonic() >= next_upload_refresh:
+            if source == "upload" and time.monotonic() >= next_upload_refresh:
                 with proposal_tracker.lock:
                     proposal_tracker.force_detection = True
                 next_upload_refresh = time.monotonic() + 1.0
-            with node.lock:
-                if gen != node.generation:
-                    continue
-                gen, frame, seq = node.generation, node.frame, node.frame_seq
-                settings = dict(node.grounding_settings)
-                received_at = node.camera_received_at if node.source == "camera" else None
-                region = getattr(node, "sam3_roi", DEFAULT_ROI)
             if frame is None:
                 with node.lock:
                     if gen == node.generation:
@@ -86,7 +83,7 @@ def run(node, pipeline):
                 # recopy, retrack, publish or encode an already processed frame.
                 # Flush after 200 ms without input so paused cameras still get
                 # their first 3D boxes and completed labels; uploads flush now.
-                if (node.source == "camera" and received_at is not None
+                if (source == "camera" and received_at is not None
                         and time.monotonic() - received_at < 0.2):
                     continue
                 if (not proposal_tracker.has_result()
@@ -140,7 +137,7 @@ def run(node, pipeline):
                 # Geometry is published before this background callback finishes.
                 # All gallery GPU work and diagnostics stay off the KCF loop.
                 started = time.monotonic()
-                gallery.refresh(node.root, encoder, max_side, stride)
+                gallery.refresh(node.gallery_dir, encoder, max_side, stride)
                 diagnostics = []
                 detections = recognize_objects(
                     Image.fromarray(seed_pixels), proposals, encoder, gallery, max_side, stride,
@@ -279,15 +276,8 @@ def run(node, pipeline):
                     f"{recognition_info['class_count']} classes / {recognition_info['reference_count']} references | "
                     f"{time.monotonic()-start:.2f}s inference"
                 )
-                node.pending_publication = (detections, header, gen)
-                node.pending_publication_timing = dict(
-                    frame_id=seq, received_at=received_at, completed_at=completed_at)
-                if node.pending_render is not None:
-                    node.pending_render[0].release()
-                node.pending_render = (shared_frame.retain(), detections, header, gen,
-                                       seq, bbox3d_info, completed_at)
-                node.render_changed.set()
-                node.publish_changed.set()
+                node.queue_outputs(shared_frame, detections, header, gen, seq,
+                                   bbox3d_info, received_at, completed_at)
             if proposal_tracker.recognition_error:
                 node.set_readiness("error", "Recognition failed: " + proposal_tracker.recognition_error)
             elif recognition is not None:

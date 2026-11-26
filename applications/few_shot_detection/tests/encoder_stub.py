@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from dinov3_cases.platforms.nvidia.preprocessing import prepare_cat2real_image
-from dinov3_cases.platforms.nvidia.recognition import encode_object
+from dinov3_cases.platforms.nvidia.gallery_matching import encode_object
 
 
 class ColorEncoder:

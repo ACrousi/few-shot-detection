@@ -103,7 +103,7 @@ class Sam3Detector:
     @torch.inference_mode()
     def detect(self, image, prompt, box_threshold, limit,
                *, min_width=0, min_height=0, min_area=0, containment_threshold=0.95):
-        from dinov3_cases.platforms.nvidia.recognition import clean_proposals
+        from dinov3_cases.platforms.nvidia.gallery_matching import clean_proposals
         with self.lock:
             labels = self.validate_prompt(prompt)
             features, mask = self._text_features(labels)

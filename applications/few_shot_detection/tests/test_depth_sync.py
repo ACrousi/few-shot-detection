@@ -12,7 +12,7 @@ from std_msgs.msg import Header
 from builtin_interfaces.msg import Time
 
 from dinov3_cases.geometry.depth_sync import matched_inputs
-from dinov3_cases.ros.node import CaseNode
+from dinov3_cases.ros.node import FewShotDetectionNode
 
 
 def header(seconds=10.0, frame="camera_color_optical_frame"):
@@ -50,7 +50,7 @@ def test_node_converts_depth_units_and_keeps_original_snapshot(encoding, scale):
     frame = Image(header=header(), width=160, height=120)
     depth = Image(header=header(), width=160, height=120, encoding=encoding)
     node.depth_frames.append(depth)
-    inputs = CaseNode.depth_inputs_for(node, frame)
+    inputs = FewShotDetectionNode.depth_inputs_for(node, frame)
     node.depth_frames.clear()  # Long inference may outlive the ring buffer.
     node.bridge.imgmsg_to_cv2.return_value = np.full((120, 160), scale).astype(
         np.uint16 if encoding == "16UC1" else np.float32)
@@ -59,12 +59,12 @@ def test_node_converts_depth_units_and_keeps_original_snapshot(encoding, scale):
     node.platform_pipeline=load_pipeline('config/platforms/nvidia.yaml')
     node.platform_pipeline.cloud_filter=node.cloud_filter
     node.platform_pipeline.depth_ray_cache=node.depth_ray_cache
-    CaseNode.estimate_bboxes3d(node, items, inputs)
+    FewShotDetectionNode.estimate_bboxes3d(node, items, inputs)
     assert items[0]["bbox3d"]["position"][2] == pytest.approx(1.)
     assert items[0]["bbox3d"]["method"] == "central_depth_component_plane_rectangle"
     assert items[0]["bbox3d"]["plane_backend"] == "open3d_cpu"
     assert items[0]["bbox3d"]["plane_inlier_count"] > 0
-    CaseNode.estimate_bboxes3d(node, [dict(label="medicine")], None)
+    FewShotDetectionNode.estimate_bboxes3d(node, [dict(label="medicine")], None)
 
 
 def test_depth_snapshot_does_not_wait_for_future_depth():
@@ -75,7 +75,7 @@ def test_depth_snapshot_does_not_wait_for_future_depth():
     node = SimpleNamespace(param=values.__getitem__, lock=lock,
                            depth_frames=[], depth_infos=[calibration()])
     frame = Image(header=header(), width=160, height=120)
-    assert CaseNode.depth_inputs_for(node, frame) is None
+    assert FewShotDetectionNode.depth_inputs_for(node, frame) is None
     lock.__enter__.assert_called_once()
 
 
@@ -90,7 +90,7 @@ def test_node_sync_seconds_are_independent_of_fps(fps, offset, matched):
     node = SimpleNamespace(param=values.__getitem__, lock=threading.Lock(),
                            depth_frames=[depth], depth_infos=[info])
     frame = Image(header=header(), width=160, height=120)
-    assert CaseNode.depth_inputs_for(node, frame) == ((depth, info) if matched else None)
+    assert FewShotDetectionNode.depth_inputs_for(node, frame) == ((depth, info) if matched else None)
 
 
 @pytest.mark.parametrize("offset,matched", [(0., True), (.001, False)])
@@ -101,4 +101,4 @@ def test_zero_seconds_tolerance_requires_identical_timestamps(offset, matched):
     node = SimpleNamespace(param=values.__getitem__, lock=threading.Lock(),
                            depth_frames=[depth], depth_infos=[info])
     frame = Image(header=header(), width=160, height=120)
-    assert CaseNode.depth_inputs_for(node, frame) == ((depth, info) if matched else None)
+    assert FewShotDetectionNode.depth_inputs_for(node, frame) == ((depth, info) if matched else None)

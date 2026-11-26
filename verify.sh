@@ -7,8 +7,8 @@ if [[ $# -gt 1 || ( $# -eq 1 && "$1" != --hardware ) ]]; then
 fi
 source /opt/ros/jazzy/setup.bash
 app="$root/applications/few_shot_detection"
-python="$app/.venv/bin/python"
-export LD_LIBRARY_PATH="$app/.venv/lib/python3.12/site-packages/tensorrt_libs:/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}"
+source "$app/runtime_env.sh"
+python="$VIRTUAL_ENV/bin/python"
 export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 HF_HUB_DISABLE_PROGRESS_BARS=1
 "$python" -m pytest -q -m 'not hardware'

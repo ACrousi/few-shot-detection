@@ -1,6 +1,6 @@
 """Calibrated wireframe projection and configuration-selected web overlays."""
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import threading
 
 import cv2
@@ -9,7 +9,7 @@ import pytest
 from sensor_msgs.msg import CameraInfo
 
 from dinov3_cases.api.visualization import draw_bbox3d, render_bbox_overlay
-from dinov3_cases.api.web import create_app
+from dinov3_cases.api.routes import create_app
 
 
 def calibration(model="plumb_bob"):
@@ -75,7 +75,7 @@ def test_modes_share_input_without_drawing_2d_fallback_in_3d():
 @pytest.mark.parametrize("mode", ["2d", "3d"])
 def test_web_serves_only_configured_overlay_and_has_no_mode_switch(tmp_path, mode):
     lock = threading.Lock()
-    node = SimpleNamespace(root=tmp_path, lock=lock, bbox_visualization_mode=mode)
+    node = SimpleNamespace(gallery_dir=tmp_path, capture_camera=Mock(), lock=lock, bbox_visualization_mode=mode)
     app = create_app(node)
     client = app.test_client()
     assert client.get('/overlay.jpg').status_code == 404

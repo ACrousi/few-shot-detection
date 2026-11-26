@@ -65,7 +65,7 @@ applications/few_shot_detection/.venv/bin/python applications/few_shot_detection
 
 ## 效能診斷
 
-GPU 優化回歸使用 `test_gpu_acceleration.py`，會實際載入 CUDA geometry helper。需先完成原生建置。包含 GPU 平面擬合、ROI 插值。圖片串流測試另涵蓋真實 ROS Image→JPEG、色彩／尺寸／header、多觀看者共享及慢讀者測試。
+GPU ROI 回歸使用 `test_gpu_acceleration.py`，直接執行 PyTorch CUDA 算子，不需原生建置。涵蓋 ROI 插值與 CPU OpenCV 的像素對照、批次順序、非連續影像、自訂 CUDA stream、空批次與輸入驗證。平面擬合由既有 Open3D 深度測試覆蓋。圖片串流測試另涵蓋真實 ROS Image→JPEG、色彩／尺寸／header、多觀看者共享及慢讀者測試。
 
 ```bash
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 applications/few_shot_detection/.venv/bin/python -m pytest -q applications/few_shot_detection/tests/test_gpu_acceleration.py

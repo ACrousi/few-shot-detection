@@ -24,10 +24,10 @@ bash setup_all.sh
 
 開啟 <http://127.0.0.1:8090>。ROS Jazzy、CUDA driver、相機驅動與 ROS 訊息套件需由系統提供；模型建置與推論不依賴相鄰的模型專案。SAM3 首次下載需要 Hugging Face 官方存取權；已有本機模型可離線執行。
 
-`setup_all.sh` 安裝 Python 環境、檢查 KCF，並只編譯目前 NVIDIA 模型流程需要的 CUDA geometry。單獨更新 Python 環境可執行 `bash setup_env.sh`。
+`setup_all.sh` 安裝 Python 環境並檢查 KCF；GPU ROI 使用 PyTorch CUDA 算子，平面擬合使用 Open3D CPU，不需編譯自訂 CUDA 函式庫。單獨更新 Python 環境可執行 `bash setup_env.sh`。
 
 套件清單：[requirements.txt](requirements.txt)、[Thor pins](constraints-thor.txt)。完整操作與排程說明見 [BUILD_GUIDE.md](BUILD_GUIDE.md)。
 
 程式責任與資料流程見 [程式導覽](src/dinov3_cases/README.md)，檢查指令見 [測試說明](tests/README.md)。模型建置統一使用 `build_models.py`。
 
-更新 native 程式後，在容器內執行 `bash applications/few_shot_detection/native/build.sh`（從工作區根目錄）；不需重裝依賴。詳見 [原生建置說明](BUILD_GUIDE.md#gpu-延遲優化)。
+GPU ROI 的補白與縮放直接使用已安裝的 PyTorch；詳見 [GPU 前處理說明](BUILD_GUIDE.md#gpu-延遲優化)。

@@ -6,7 +6,7 @@ import pytest
 import torch
 from PIL import Image
 
-from dinov3_cases.platforms.nvidia.recognition import ObjectGallery, recognize_objects
+from dinov3_cases.platforms.nvidia.gallery_matching import ObjectGallery, recognize_objects
 from dinov3_cases.timing import ModelTimings
 from encoder_stub import ColorEncoder
 
@@ -62,7 +62,7 @@ def test_node_worker_encodes_on_handoff_and_keeps_diagnostics_on_recognition_fra
     import threading
     from types import SimpleNamespace
     from unittest.mock import patch
-    from dinov3_cases.ros.node import CaseNode
+    from dinov3_cases.ros.node import FewShotDetectionNode
     from dinov3_cases.frame_pool import SharedFramePool
     from dinov3_cases.tracking.identities import BBoxSmoother
 
@@ -120,7 +120,7 @@ def test_node_worker_encodes_on_handoff_and_keeps_diagnostics_on_recognition_fra
     node = SimpleNamespace(set_readiness=Mock(), readiness_lock=threading.Lock(),
         readiness=dict(state="ready"),
         lock=threading.Lock(), generation=0, frame=Image.fromarray(pixels), frame_seq=0,
-        source='upload', camera_received_at=None, root=tmp_path, stop=threading.Event(),
+        source='upload', camera_received_at=None, gallery_dir=tmp_path, stop=threading.Event(),
         image_changed=threading.Event(), frame_pool=SharedFramePool(),
         grounding_settings=dict(prompt='box.', box_threshold=.1, detection_interval=10,
                                 recognition_threshold=.75, margin=.05),
@@ -148,15 +148,16 @@ def test_node_worker_encodes_on_handoff_and_keeps_diagnostics_on_recognition_fra
             observations.append((node.object_debug_revision, node.object_debug_snapshot,
                                  [item['label'] for item in node.detections], node.performance.copy()))
 
-    node.acquire_input_frame = lambda *a, **kw: CaseNode.acquire_input_frame(node, *a, **kw)
+    node.queue_outputs = FewShotDetectionNode.queue_outputs.__get__(node)
+    node.acquire_input_frame = lambda *a, **kw: FewShotDetectionNode.acquire_input_frame(node, *a, **kw)
     node.worker_ticks = ticks
     try:
         with patch('dinov3_cases.platforms.nvidia.encoder.Encoder', return_value=encoder), \
-                patch('dinov3_cases.platforms.nvidia.live.feature_stride', return_value=16), \
-                patch('dinov3_cases.platforms.nvidia.transport.SharedMemoryGroundingDetector'), \
-                patch('dinov3_cases.platforms.nvidia.recognition.ObjectGallery', return_value=gallery), \
-                patch('dinov3_cases.platforms.nvidia.live.AsyncProposals', return_value=scheduler):
-            CaseNode.run_grounded_worker(node)
+                patch('dinov3_cases.platforms.nvidia.live_inference.feature_stride', return_value=16), \
+                patch('dinov3_cases.platforms.nvidia.sam3_worker.SharedMemoryGroundingDetector'), \
+                patch('dinov3_cases.platforms.nvidia.gallery_matching.ObjectGallery', return_value=gallery), \
+                patch('dinov3_cases.platforms.nvidia.live_inference.AsyncProposals', return_value=scheduler):
+            FewShotDetectionNode.run_grounded_worker(node)
         assert encoder.calls == sum(len(row[1]) for row in rows if row[4] == 'dino')
         assert [row[0] for row in observations] == [row[3] for row in rows]
         for index in range(1, len(rows)):

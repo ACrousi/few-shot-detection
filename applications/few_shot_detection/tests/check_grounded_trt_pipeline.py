@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 import rclpy
 
-from dinov3_cases.ros.node import CaseNode
+from dinov3_cases.ros.node import FewShotDetectionNode
 from dinov3_cases.runtime import ARTIFACTS
 
 
@@ -38,7 +38,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         rclpy.init(args=['--ros-args', '-p', f'cases_dir:={directory}', '-p', 'port:=0',
                         '-p', 'platform_config:=config/platforms/nvidia.yaml', '-p', 'pose_enabled:=false', '-p', 'grounding_prompt:=person'])
-        node = CaseNode()
+        node = FewShotDetectionNode()
         client = node.app.test_client()
         packets = []
         from sensor_msgs.msg import Image as ImageMsg
@@ -94,15 +94,6 @@ def main():
             print(json.dumps(report, indent=2))
         finally:
             release.set()
-            node.stop.set()
-            node.image_changed.set()
-            node.publish_changed.set()
-            node.render_changed.set()
-            node.server.shutdown()
-            node.close_grounding_worker()
-            node.worker.join(15)
-            node.publisher_worker.join(3)
-            node.renderer_worker.join(3)
             node.destroy_node()
             rclpy.shutdown()
         assert all(slot[0] is None for slot in node.frame_pool.slots)

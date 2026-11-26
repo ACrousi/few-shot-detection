@@ -4,7 +4,7 @@ import argparse
 import os
 import time
 
-import dinov3_cases.platforms.nvidia.transport as ipc
+import dinov3_cases.platforms.nvidia.sam3_worker as ipc
 
 
 class Detector:

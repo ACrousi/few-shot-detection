@@ -1,0 +1,3 @@
+ARG BASE_IMAGE=advigw/isaac-ros-base-jazzy:1.00
+FROM ${BASE_IMAGE}
+USER root

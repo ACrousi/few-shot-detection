@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from dinov3_cases.platforms.nvidia.preprocessing import MODEL_ID, prepare_cat2real_image
-from dinov3_cases.platforms.nvidia.recognition import encode_object
+from dinov3_cases.platforms.nvidia.gallery_matching import encode_object
 from dinov3_cases.platforms.nvidia.diagnostics import object_debug_views
 
 

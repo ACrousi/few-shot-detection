@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 from PIL import Image
 
-from dinov3_cases.api.web import create_app
+from dinov3_cases.api.routes import create_app
 
 
 def picture(color="red"):
@@ -21,9 +21,9 @@ def picture(color="red"):
 @pytest.fixture
 def service(tmp_path):
     node = SimpleNamespace(
-        root=tmp_path, lock=threading.Lock(), reference_stride=16,
+        gallery_dir=tmp_path, capture_camera=Mock(), lock=threading.Lock(), reference_stride=16,
         grounding_settings={"box_threshold": 0.3},
-        bbox_visualization_mode="3d", generation=0, selected="", source="camera",
+        bbox_visualization_mode="3d", generation=0, selected_class="", source="camera",
         frame=None, frame_seq=0, detections=[], video_at=None,
         image_stream=Mock(), clear_object_debug=Mock(),
         image_changed=threading.Event(), render_changed=threading.Event(),
@@ -49,13 +49,13 @@ def test_current_pages_upload_reference_grid_and_source_switch(service):
         "case": "medicine", "images": (picture(), "reference.png"),
     })
     assert response.json == {"ok": True, "count": 1}
-    assert node.selected == "medicine" and node.generation == 1
+    assert node.selected_class == "medicine" and node.generation == 1
     node.image_stream.reset.assert_called_once()
     assert node.image_changed.is_set() and node.render_changed.is_set()
     listing = client.get("/api/images?case=medicine").json
     assert listing["cases"] == ["medicine"]
     name = listing["images"][0]["name"]
-    with Image.open(node.root / "medicine" / name) as saved:
+    with Image.open(node.gallery_dir / "medicine" / name) as saved:
         assert saved.mode == "RGB"  # Homepage upload contract.
     assert client.get("/api/references?case=medicine").json["images"][0]["name"] == name
     assert client.get(f"/api/references/grid/medicine/{name}").mimetype == "image/png"
@@ -81,6 +81,6 @@ def test_invalid_upload_batch_does_not_publish_partial_gallery(service):
         "images": [(picture(), "valid.png"), (io.BytesIO(b"broken"), "broken.png")],
     })
     assert response.status_code == 400
-    assert not (node.root / "medicine").exists()
-    assert node.generation == 0 and node.selected == ""
+    assert not (node.gallery_dir / "medicine").exists()
+    assert node.generation == 0 and node.selected_class == ""
     node.image_stream.reset.assert_not_called()

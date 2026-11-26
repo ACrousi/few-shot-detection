@@ -31,9 +31,9 @@ SAM3 定期重新偵測負責更新物件尺寸、補回失追；
 
 `opencv-contrib-python` 已在應用依賴中。單獨移植追蹤時，只需 NumPy 與提供 `TrackerKCF_create` 的 OpenCV；不需要 Torch、TensorRT、CUDA 或 ROS。
 
-`setup_all.sh` 檢查 KCF，並為目前 NVIDIA 模型部署建置 CUDA geometry。
-`native/build.sh` 預設只建置 `gpu_geometry`；新 Compose image 名稱為 `few-shot-detection-kcf:local`。
-這次替換只移除了追蹤的 NVIDIA 依賴；模型推論與部分 ROI/3D 幾何仍需後續移植。
+`setup_all.sh` 安裝 Python 環境並檢查 KCF，不需編譯 CUDA geometry。
+GPU ROI 使用 PyTorch CUDA 算子，3D 平面擬合使用 Open3D CPU；模型推論仍使用 NVIDIA TensorRT。
+Compose image 名稱為 `few-shot-detection-kcf:local`。
 
 ## 驗證命令
 
@@ -53,12 +53,12 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 applications/few_shot_detection/.venv/bin/pytho
 
 - SDK 56 passed；application 553 passed（含新增的 12 個 KCF 測試）。
 - 真實 SAM3/Cat2Real + KCF 非同步阻塞測試、ROS/HTTP smoke 均通過。
-- 預設 native build 只建置 CUDA geometry。
+- GPU ROI 使用預編譯 PyTorch CUDA 算子，已移除自訂 native build。
 - 記錄位於 `validation/kcf/`。測試完成後 HTTP 8090 與相機均維持關閉。
 - 未在 Intel／Qualcomm 硬體量測；KCF 的 CPU 模組隔離測試已驗證不匯入 NVIDIA runtime。
 
 ## 清除舊追蹤實作（2026-11-16）
 
-已移除舊追蹤 Python 模組、獨立 YAML、C++ bridge、專用測試、安裝腳本與專用 CUDA RGB→RGBA 縮放函式，並清除其編譯產物及 native 建置快取。建置入口僅保留 CUDA geometry，操作文件統一使用 KCF。
+已移除舊追蹤 Python 模組、獨立 YAML、C++ bridge、專用測試、安裝腳本與專用 CUDA RGB→RGBA 縮放函式，並清除其編譯產物及 native 建置快取。後續 GPU ROI 已改用 PyTorch，CUDA geometry 及其建置入口也已移除，操作文件統一使用 KCF。
 
 本次 `./verify.sh`：SDK 56 passed、application 545 passed。CUDA geometry 從乾淨快取建置成功。既有 `validation/` 與移入驗證文件保留作為歷史證據。

@@ -11,8 +11,8 @@ import numpy as np
 from PIL import Image
 import rclpy
 
-from dinov3_cases.ros.node import CaseNode
-from dinov3_cases.platforms.nvidia.live import recognize_objects
+from dinov3_cases.ros.node import FewShotDetectionNode
+from dinov3_cases.platforms.nvidia.live_inference import recognize_objects
 from dinov3_cases.runtime import ARTIFACTS
 
 
@@ -27,7 +27,7 @@ def main():
         assert dino_release.wait(30), 'Stalled DINO was never released'
         return real_recognize(*args, **kwargs)
 
-    patcher = patch('dinov3_cases.platforms.nvidia.live.recognize_objects', gated_recognize)
+    patcher = patch('dinov3_cases.platforms.nvidia.live_inference.recognize_objects', gated_recognize)
     patcher.start()
     with tempfile.TemporaryDirectory() as directory:
         folder = Path(directory) / 'sample'
@@ -37,7 +37,7 @@ def main():
         rclpy.init(args=['--ros-args', '-p', f'cases_dir:={directory}', '-p', 'port:=0',
                         '-p', 'platform_config:=config/platforms/nvidia.yaml', '-p', 'pose_enabled:=false', '-p', 'grounding_prompt:=person',
                         '-p', 'grounding_detection_interval:=3', '-p', 'opencv_num_threads:=1'], domain_id=131)
-        node = CaseNode()
+        node = FewShotDetectionNode()
         client = node.app.test_client()
 
         def wait_for(predicate, seconds=90, pump=False):
@@ -183,15 +183,6 @@ def main():
             release.set()
             dino_release.set()
             patcher.stop()
-            node.stop.set()
-            for event in (node.image_changed,
-                          node.publish_changed, node.render_changed):
-                event.set()
-            node.server.shutdown()
-            node.close_grounding_worker()
-            for worker in (node.worker, node.publisher_worker,
-                           node.renderer_worker):
-                worker.join(10)
             node.destroy_node()
             rclpy.shutdown()
 

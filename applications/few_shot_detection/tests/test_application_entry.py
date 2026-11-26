@@ -6,7 +6,7 @@ import sys
 import pytest
 import yaml
 
-from few_shot_detection.pipeline import load_settings
+from few_shot_detection.standalone import load_settings
 
 
 def configuration(tmp_path, **overrides):
@@ -39,7 +39,7 @@ def test_invalid_deployment_fails_without_runtime_fallback(tmp_path, overrides):
 def test_configuration_does_not_import_ros(tmp_path):
     config = configuration(tmp_path)
     subprocess.run([sys.executable, '-c',
-                    'import sys; from few_shot_detection.pipeline import load_settings; '
+                    'import sys; from few_shot_detection.standalone import load_settings; '
                     'load_settings(sys.argv[1]); '
                     'assert "rclpy" not in sys.modules; assert "cv_bridge" not in sys.modules',
                     str(config)], check=True, cwd=tmp_path)
@@ -51,3 +51,20 @@ def test_closed_pipeline_rejects_inference():
     pipeline.close(); pipeline.close()
     with pytest.raises(RuntimeError,match='closed'):
         pipeline.infer(None)
+
+
+def test_single_image_entry_reads_platform_yaml_once(tmp_path, monkeypatch):
+    from unittest.mock import patch
+    from PIL import Image
+    from robotic_inference.configuration import read_yaml
+    from few_shot_detection.__main__ import main
+
+    config = configuration(tmp_path)
+    image = tmp_path / "input.png"
+    Image.new("RGB", (4, 4)).save(image)
+    monkeypatch.setattr(sys, "argv", ["infer", "--config", str(config), "--image", str(image)])
+    with patch("dinov3_cases.platforms.read_yaml", wraps=read_yaml) as select_read, \
+         patch("dinov3_cases.platforms.nvidia.pipeline.read_yaml", wraps=read_yaml) as platform_read, \
+         patch("dinov3_cases.platforms.nvidia.pipeline.Pipeline.infer", return_value=[]):
+        main()
+    assert select_read.call_count + platform_read.call_count == 1

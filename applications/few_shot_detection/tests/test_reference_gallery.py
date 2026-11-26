@@ -3,12 +3,13 @@
 import threading
 from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 from PIL import Image
 
-from dinov3_cases.api.web import create_app
+from dinov3_cases.api.routes import create_app
 from dinov3_cases.platforms.nvidia.patches import reference_grid_image
 from dinov3_cases.runtime import INPUT_SIZE
 
@@ -35,7 +36,7 @@ def gallery(tmp_path):
     (folder / "broken.png").write_bytes(b"broken")
     (folder / "link.png").symlink_to(folder / "one.png")
     node = SimpleNamespace(
-        root=tmp_path,
+        gallery_dir=tmp_path, capture_camera=Mock(),
         lock=threading.Lock(),
         reference_stride=16,
     )

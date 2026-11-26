@@ -69,7 +69,7 @@ def main():
         import torch
         from PIL import Image
         from dinov3_cases.platforms.nvidia.encoder import Encoder
-        from dinov3_cases.platforms.nvidia.recognition import encode_object
+        from dinov3_cases.platforms.nvidia.gallery_matching import encode_object
         from dinov3_cases.platforms.nvidia.artifacts import DINO_ENGINE_SINGLE, DINO_ENGINE_BATCH
         from dinov3_cases.platforms.nvidia.sam3 import prepare_sam3_pixels, prepare_sam3_tensor
         image=Image.fromarray(rgb);selected=boxes[:4]

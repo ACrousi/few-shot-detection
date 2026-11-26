@@ -42,9 +42,9 @@
 `prepare_object()`、`Encoder.encode()` 與 `run_dino_image()` 均已在本輪開始前移除，
 不再屬於保留需求。原有深度／追蹤／分類／診斷測試仍保留。
 
-原生建置統一使用 `native/build.sh [all|gpu_geometry]`；
+GPU ROI 使用 PyTorch CUDA 算子；舊 CUDA RANSAC、ctypes 包裝及 native 建置入口已移除。
 完整準備使用 `setup_all.sh`，追蹤依賴由 Python 環境提供。
-移除只轉送指令的三支舊 native 相容腳本。Python 安裝直接使用 `requirements.txt`，
+Python 安裝直接使用 `requirements.txt`，
 開發測試額外使用 `requirements-dev.txt`，不再經過空的 build requirements 包裝。
 
 ## 驗證邊界

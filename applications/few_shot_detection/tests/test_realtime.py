@@ -7,8 +7,8 @@ import threading
 
 import pytest
 
-from dinov3_cases.ros.node import CaseNode
-from dinov3_cases.api.web import create_app
+from dinov3_cases.ros.node import FewShotDetectionNode
+from dinov3_cases.api.routes import create_app
 
 
 def test_model_timings_topic_contains_only_latest_milliseconds():
@@ -19,18 +19,18 @@ def test_model_timings_topic_contains_only_latest_milliseconds():
     with timings.measure('sam3', (3, 27)) as result:
         result['duration_ms'] = 145.6
     node = SimpleNamespace(model_timings=timings, model_timings_pub=Mock())
-    CaseNode.publish_model_timings(node)
+    FewShotDetectionNode.publish_model_timings(node)
     message = node.model_timings_pub.publish.call_args.args[0]
     payload = json.loads(message.data)
     assert payload == {'kcf_ms': None, 'dinov3_ms': None, 'sam3_ms': 145.6}
     with timings.measure('sam3', (3, 28)):
-        CaseNode.publish_model_timings(node)
+        FewShotDetectionNode.publish_model_timings(node)
         assert json.loads(node.model_timings_pub.publish.call_args.args[0].data) == payload
 
 
 def test_worker_wakes_on_input_or_timeout_and_stops_before_processing():
     node = SimpleNamespace(image_changed=Mock(), stop=threading.Event())
-    ticks = CaseNode.worker_ticks(node)
+    ticks = FewShotDetectionNode.worker_ticks(node)
     # A signaled input and a periodic timeout both allow processing.
     node.image_changed.wait.side_effect = [True, False, True]
     next(ticks)
@@ -48,7 +48,7 @@ def test_requested_debug_revision_survives_new_inference(tmp_path):
     old = Mock(reference_cases=[])
     old.render.return_value = ([], {(0, "crop"): b"old-jpeg"})
     node = SimpleNamespace(
-        root=tmp_path,
+        gallery_dir=tmp_path, capture_camera=Mock(),
         lock=lock,
         object_debug_revision=1,
         object_debug_snapshot=old,
@@ -82,6 +82,7 @@ def test_blocked_ros_output_does_not_lock_input_and_skips_pending_frames():
         lock=threading.Lock(),
         generation=0,
         pending_publication=([], Header(frame_id="first"), 0),
+        pending_render=None, render_changed=threading.Event(), performance={},
         recognition_pub=Mock(),
         bbox3d_pub=Mock(),
         bridge=Mock(),
@@ -90,16 +91,20 @@ def test_blocked_ros_output_does_not_lock_input_and_skips_pending_frames():
     node.bbox3d_pub.get_subscription_count.return_value = 0
     node.recognition_pub.get_subscription_count.return_value = 1
     node.recognition_pub.publish.side_effect = publish
-    worker = threading.Thread(target=CaseNode.run_publications, args=(node,))
+    worker = threading.Thread(target=FewShotDetectionNode.run_publications, args=(node,))
     node.publish_changed.set()
     worker.start()
     try:
         assert entered.wait(3)
         assert node.lock.acquire(timeout=1), "DDS publication must not hold the input lock"
         try:
-            node.pending_publication = ([], Header(frame_id="obsolete"), 0)
-            node.pending_publication = ([], Header(frame_id="latest"), 0)
-            node.publish_changed.set()
+            obsolete, latest = Mock(), Mock()
+            for seq, (name, frame) in enumerate((("obsolete", obsolete), ("latest", latest))):
+                FewShotDetectionNode.queue_outputs(node, frame, [], Header(frame_id=name),
+                                                   0, seq, None, None, 0.0)
+            obsolete.retain.return_value.release.assert_called_once_with()
+            latest.retain.return_value.release.assert_not_called()
+            assert node.pending_render[0] is latest.retain.return_value
         finally:
             node.lock.release()
         release.set()
@@ -125,7 +130,7 @@ def test_camera_input_fps_counts_arrivals_independently_of_result_fps():
     frame = SimpleNamespace(header=SimpleNamespace(frame_id='rgb'))
     with patch('dinov3_cases.ros.node.time.monotonic', side_effect=[10., 10.+1/30, 10.+2/30]):
         for _ in range(3):
-            CaseNode.on_image(node, frame)
+            FewShotDetectionNode.on_image(node, frame)
     assert node.camera_fps == pytest.approx(30.)
     assert node.performance['result_fps'] == 20.
     assert node.camera_seq == node.frame_seq == 3
@@ -143,7 +148,7 @@ def test_pending_overlay_cannot_exhaust_input_slots_during_sam3_and_rendering():
     node = SimpleNamespace(frame_pool=pool, lock=threading.Lock(), pending_render=(queued,))
     fresh = None
     try:
-        fresh = CaseNode.acquire_input_frame(
+        fresh = FewShotDetectionNode.acquire_input_frame(
             node, np.full((8, 8, 3), 4, np.uint8), frame_id=4, timestamp=None,
         )
         assert fresh is not None, 'Queued rendering must yield a slot to current inference'
@@ -181,7 +186,7 @@ def test_ros_publication_timing_follows_its_frame(current_frame):
     node.bbox3d_pub.get_subscription_count.return_value = 0
     node.tag_pub.get_subscription_count.return_value = 0
     with patch('dinov3_cases.ros.node.time.monotonic', side_effect=[20., 21.]):
-        CaseNode.run_publications(node)
+        FewShotDetectionNode.run_publications(node)
     assert node.last_publication['callback_to_publish_ms'] == 11000.
     assert node.last_publication['result_to_publish_ms'] == 2000.
     assert node.last_publication['dds_submit_ms'] == 1000.

@@ -11,9 +11,9 @@ from cv_bridge import CvBridge
 from std_msgs.msg import Header
 
 from dinov3_cases.api.image_stream import ImageStream
-from dinov3_cases.ros.node import CaseNode
+from dinov3_cases.ros.node import FewShotDetectionNode
 from dinov3_cases.api.visualization import render_display_overlay
-from dinov3_cases.api.web import create_app
+from dinov3_cases.api.routes import create_app
 
 
 def render_node(audience=True, boxes=True, source='camera'):
@@ -46,11 +46,11 @@ def test_shared_ros_image_is_drawn_once_with_header_and_only_on_demand(web,exter
     node,frame,_=render_node(audience=web,boxes=boxes)
     node.annotated_image_pub.get_subscription_count.return_value=1+int(external)
     with patch('dinov3_cases.ros.node.render_display_overlay',wraps=render_display_overlay) as draw:
-        CaseNode.run_rendering(node)
+        FewShotDetectionNode.run_rendering(node)
     assert draw.call_count==int(web or external)
     frame.release.assert_called_once()
     node.stop.is_set.side_effect=[False,True]
-    CaseNode.run_image_publications(node)
+    FewShotDetectionNode.run_image_publications(node)
     assert node.annotated_image_pub.publish.call_count==int(web or external)
     if web or external:
         message=node.annotated_image_pub.publish.call_args.args[0]
@@ -84,7 +84,7 @@ def test_slow_rviz_does_not_hold_state_lock_and_next_publication_uses_latest_fra
     node.annotated_image_pub.publish.side_effect = publish
     node.pending_annotated_image = job(1)
     node.annotated_image_changed.set()
-    worker = threading.Thread(target=CaseNode.run_image_publications, args=(node,))
+    worker = threading.Thread(target=FewShotDetectionNode.run_image_publications, args=(node,))
     worker.start()
     try:
         assert entered.wait(3)
@@ -113,7 +113,7 @@ def test_raw_image_worker_discards_old_source_and_unsubscribed_frames(generation
     node.annotated_image_pub.get_subscription_count.return_value = readers
     node.pending_annotated_image = (np.zeros((2, 2, 3), np.uint8), Header(), 0)
     node.annotated_image_changed.set()
-    CaseNode.run_image_publications(node)
+    FewShotDetectionNode.run_image_publications(node)
     node.annotated_image_pub.publish.assert_not_called()
     assert node.pending_annotated_image is None
 
@@ -135,7 +135,7 @@ def test_3d_renderer_waits_for_depth_and_never_draws_2d_fallback(pending_dino, n
         node.pending_render = tuple(job)
     with patch('dinov3_cases.api.visualization.cv2.rectangle', wraps=cv2.rectangle) as rectangle, \
             patch('dinov3_cases.api.visualization.cv2.putText', wraps=cv2.putText) as text:
-        CaseNode.run_rendering(node)
+        FewShotDetectionNode.run_rendering(node)
     rectangle.assert_not_called()
     if depth_ready:
         assert text.call_args.args[1] == ('box' if name == 'unknown' else 'known | box')
@@ -160,7 +160,7 @@ def test_renderer_paces_frame_starts_without_delay_after_overrun(work_ms,expecte
     node.stop.wait.side_effect=wait
     with patch('dinov3_cases.ros.node.time.monotonic',side_effect=lambda:clock[0]), \
             patch('dinov3_cases.ros.node.render_display_overlay',side_effect=draw):
-        CaseNode.run_rendering(node)
+        FewShotDetectionNode.run_rendering(node)
     assert waits==pytest.approx([expected_wait_ms] if expected_wait_ms else [])
     frame.release.assert_called_once()
 
@@ -168,7 +168,7 @@ def test_renderer_paces_frame_starts_without_delay_after_overrun(work_ms,expecte
 def test_old_generation_render_is_released_and_not_published():
     node,frame,_=render_node()
     node.generation=1;node.camera_frame=None
-    CaseNode.run_rendering(node)
+    FewShotDetectionNode.run_rendering(node)
     assert node.pending_annotated_image is None
     frame.release.assert_called_once()
 
@@ -180,7 +180,7 @@ def test_new_web_reader_gets_cached_static_image_without_new_input():
     node.image_stream.needs_frame=True
     # Both passes queue the static result until a JPEG has reached the web bridge.
     with patch.object(node.annotated_image_changed,'set',side_effect=lambda:calls.append(True)):
-        CaseNode.run_rendering(node)
+        FewShotDetectionNode.run_rendering(node)
     assert len(calls)==2
 
 
@@ -195,7 +195,7 @@ def test_multiple_http_readers_share_jpeg_and_receive_latest_without_queues(tmp_
     stream=ImageStream(CvBridge())
     clients=[]
     try:
-        client=create_app(SimpleNamespace(root=tmp_path,image_stream=stream,image_changed=Mock(),render_changed=Mock())).test_client()
+        client=create_app(SimpleNamespace(gallery_dir=tmp_path, capture_camera=Mock(),image_stream=stream,image_changed=Mock(),render_changed=Mock())).test_client()
         # A MIME keepalive is emitted before the first camera frame arrives.
         clients=[client.get('/image_annotated.mjpg',buffered=False) for _ in range(2)]
         assert all(r.status_code==200 and r.headers['Cache-Control']=='no-store' for r in clients)

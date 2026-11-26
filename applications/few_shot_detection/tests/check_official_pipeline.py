@@ -13,8 +13,8 @@ from PIL import Image
 import torch
 
 from dinov3_cases.platforms.nvidia.encoder import Encoder
-from dinov3_cases.platforms.nvidia.recognition import ObjectGallery, recognize_objects
-from dinov3_cases.platforms.nvidia.transport import SharedMemoryGroundingDetector
+from dinov3_cases.platforms.nvidia.gallery_matching import ObjectGallery, recognize_objects
+from dinov3_cases.platforms.nvidia.sam3_worker import SharedMemoryGroundingDetector
 from dinov3_cases.platforms.nvidia.sam3 import Sam3Detector
 from dinov3_cases.runtime import PROJECT, CASES_DIR, INPUT_SIZE
 from dinov3_cases.platforms.nvidia.artifacts import DINO_ENGINE, DINO_MODEL, GROUNDING_ENGINE, SAM3_MODEL

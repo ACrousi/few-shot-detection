@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from dinov3_cases.api.web import create_app
+from dinov3_cases.ros.node import FewShotDetectionNode
+from dinov3_cases.api.routes import create_app
 
 
 @pytest.fixture
@@ -27,7 +28,7 @@ def camera(tmp_path):
         return proposals
 
     node = SimpleNamespace(
-        root=tmp_path, lock=threading.Lock(), image_changed=threading.Event(),
+        gallery_dir=tmp_path, lock=threading.Lock(), image_changed=threading.Event(),
         render_changed=threading.Event(), image_stream=Mock(), camera_frame=object(),
         camera_received_at=time.monotonic(), generation=0,
         grounding_settings={'prompt': 'Detect bottle.', 'box_threshold': 0.3},
@@ -39,6 +40,7 @@ def camera(tmp_path):
                             'grounding_min_bbox_area': 0}[name],
         clear_object_debug=lambda: None,
     )
+    node.capture_camera = FewShotDetectionNode.capture_camera.__get__(node)
     app = create_app(node)
     app.config['TESTING'] = True
     return app.test_client(), node, calls, proposals, pixels
@@ -52,8 +54,8 @@ def test_capture_creates_exact_crops_and_refreshes_gallery(camera):
     assert response.status_code == 200
     names = response.json['names']
     assert len(names) == 2
-    np.testing.assert_array_equal(np.array(Image.open(node.root / 'medicine' / names[0])), pixels[3:10, 2:9])
-    np.testing.assert_array_equal(np.array(Image.open(node.root / 'medicine' / names[1])), pixels[0:5, 10:16])
+    np.testing.assert_array_equal(np.array(Image.open(node.gallery_dir / 'medicine' / names[0])), pixels[3:10, 2:9])
+    np.testing.assert_array_equal(np.array(Image.open(node.gallery_dir / 'medicine' / names[1])), pixels[0:5, 10:16])
     np.testing.assert_array_equal(calls[0][0], pixels)
     assert calls[0][1] == ('Detect box.', 0.3, 20)
     assert calls[0][2]['containment_threshold'] == .8
@@ -69,7 +71,7 @@ def test_no_detections_saves_nothing(camera):
     response = client.post('/api/images/capture', json={'case': 'empty', 'prompt': 'Detect box.'})
     assert response.status_code == 200
     assert response.json['names'] == []
-    assert list((node.root / 'empty').iterdir()) == []
+    assert list((node.gallery_dir / 'empty').iterdir()) == []
     assert node.generation == 0
 
 
@@ -84,7 +86,7 @@ def test_roi_filters_boxes_without_cropping_input_or_changing_output_coordinates
     client.post('/api/images/labels', json={'case': 'medicine'})
     result = client.post('/api/images/capture', json={'case': 'medicine', 'prompt': 'Detect box.'})
     assert result.json['detections'] == [proposals[0]]
-    saved = Image.open(node.root / 'medicine' / result.json['names'][0])
+    saved = Image.open(node.gallery_dir / 'medicine' / result.json['names'][0])
     np.testing.assert_array_equal(np.array(saved), pixels[3:10, 2:9])
 
 
@@ -93,17 +95,17 @@ def test_roi_filters_boxes_without_cropping_input_or_changing_output_coordinates
                                        {'case': 'valid', 'prompt': 'unknown'}])
 def test_invalid_capture_rejected_without_inference(camera, data):
     client, node, calls, _, _ = camera
-    (node.root / 'valid').mkdir()
+    (node.gallery_dir / 'valid').mkdir()
     assert client.post('/api/images/capture', json=data).status_code == 400
     assert calls == []
-    assert list((node.root / 'valid').iterdir()) == []
+    assert list((node.gallery_dir / 'valid').iterdir()) == []
 
 
 @pytest.mark.parametrize('attribute,value', [('camera_frame', None), ('camera_received_at', None),
                                             ('camera_received_at', 0), ('grounding_detector', None)])
 def test_unavailable_camera_or_detector(camera, attribute, value):
     client, node, calls, _, _ = camera
-    (node.root / 'valid').mkdir()
+    (node.gallery_dir / 'valid').mkdir()
     setattr(node, attribute, value)
     response = client.post('/api/images/capture', json={'case': 'valid', 'prompt': 'Detect box.'})
     assert response.status_code == 503
@@ -135,7 +137,7 @@ def test_bbox_preview_uses_selected_prompt_without_saving(camera):
     assert preview.getpixel((2, 9)) == (141, 220, 196)
     np.testing.assert_array_equal(calls[0][0], pixels)
     assert calls[0][1][0] == 'Detect box.'
-    assert list(node.root.iterdir()) == []
+    assert list(node.gallery_dir.iterdir()) == []
     assert node.generation == 0
     assert node.grounding_settings['prompt'] == 'Detect bottle.'
     proposals.clear()
@@ -149,14 +151,14 @@ def test_bbox_preview_rejects_invalid_prompt(camera, data):
     client, node, calls, _, _ = camera
     assert client.post('/api/images/camera-preview', json=data).status_code == 400
     assert calls == []
-    assert list(node.root.iterdir()) == []
+    assert list(node.gallery_dir.iterdir()) == []
 
 
 @pytest.mark.parametrize('endpoint', ['camera-preview', 'capture'])
 @pytest.mark.parametrize('threshold', [0, 0.75, 1])
 def test_selected_score_threshold_reaches_detector_without_changing_live_settings(camera, endpoint, threshold):
     client, node, calls, _, _ = camera
-    (node.root / 'medicine').mkdir()
+    (node.gallery_dir / 'medicine').mkdir()
     response = client.post('/api/images/' + endpoint, json={
         'case': 'medicine', 'prompt': 'Detect box.', 'box_threshold': threshold,
     })
@@ -169,13 +171,13 @@ def test_selected_score_threshold_reaches_detector_without_changing_live_setting
 @pytest.mark.parametrize('threshold', [-0.01, 1.01, True, None, '0.5', [], float('nan'), float('inf')])
 def test_invalid_score_threshold_rejected_before_inference(camera, endpoint, threshold):
     client, node, calls, _, _ = camera
-    (node.root / 'medicine').mkdir()
+    (node.gallery_dir / 'medicine').mkdir()
     response = client.post('/api/images/' + endpoint, json={
         'case': 'medicine', 'prompt': 'Detect box.', 'box_threshold': threshold,
     })
     assert response.status_code == 400
     assert calls == []
-    assert list((node.root / 'medicine').iterdir()) == []
+    assert list((node.gallery_dir / 'medicine').iterdir()) == []
 
 
 def test_score_slider_initializes_from_live_threshold(camera):
@@ -187,7 +189,7 @@ def test_score_slider_initializes_from_live_threshold(camera):
 
 def test_delete_label_invalidates_live_recognition(camera):
     client, node, *_ = camera
-    folder = node.root / 'medicine'
+    folder = node.gallery_dir / 'medicine'
     folder.mkdir()
     (folder / 'reference.png').write_bytes(b'reference')
     response = client.delete('/api/images/labels/medicine')

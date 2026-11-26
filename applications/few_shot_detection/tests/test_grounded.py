@@ -9,7 +9,7 @@ import pytest
 import torch
 from PIL import Image
 
-from dinov3_cases.platforms.nvidia.recognition import ObjectGallery, compute_lab_histogram, clean_proposals, recognize_objects, validate_settings, validate_bbox_limits
+from dinov3_cases.platforms.nvidia.gallery_matching import ObjectGallery, compute_lab_histogram, clean_proposals, recognize_objects, validate_settings, validate_bbox_limits
 from dinov3_cases.ros.messages import recognition_message
 
 from encoder_stub import ColorEncoder
@@ -318,7 +318,7 @@ def test_selected_label_compares_every_object_and_all_reference_images_without_f
 
 
 def test_deferred_diagnostics_do_not_render_until_requested(monkeypatch):
-    import dinov3_cases.platforms.nvidia.recognition as grounded
+    import dinov3_cases.platforms.nvidia.gallery_matching as grounded
 
     image = Image.new("RGB", (32, 32), "red")
     proposals = clean_proposals([[0, 0, 32, 32]], [0.9], ["box"], image.size)
@@ -418,13 +418,13 @@ def test_invalid_containment_threshold(value):
 def test_web_settings_accept_interval_and_reject_invalid_values(tmp_path, monkeypatch):
     import threading
     from unittest.mock import Mock
-    from dinov3_cases.api.web import create_app
+    from dinov3_cases.api.routes import create_app
 
     check_kcf = Mock()
-    monkeypatch.setattr("dinov3_cases.api.web.check_kcf", check_kcf)
+    monkeypatch.setattr("dinov3_cases.live_state.check_kcf", check_kcf)
 
     node = SimpleNamespace(
-        root=tmp_path, lock=threading.Lock(), image_changed=threading.Event(),
+        gallery_dir=tmp_path, capture_camera=Mock(), lock=threading.Lock(), image_changed=threading.Event(),
         render_changed=threading.Event(), image_stream=Mock(), generation=0,
         grounding_settings=dict(prompt="box.", box_threshold=0.3,
                                 recognition_threshold=0.75, margin=0.05,

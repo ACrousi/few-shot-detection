@@ -7,6 +7,7 @@ from collections import deque
 from pathlib import Path
 
 import cv2
+from PIL import Image
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.executors import ExternalShutdownException
@@ -25,17 +26,19 @@ from dinov3_cases.config import SECONDS_PARAMETERS, default_parameters, validate
 from dinov3_cases.geometry.async_bbox3d import AsyncBBox3D
 from vision_msgs.msg import Detection2DArray, Detection3DArray
 from isaac_ros_apriltag_interfaces.msg import AprilTagDetectionArray
+from dinov3_cases.ros.depth import estimate_bboxes3d
 from dinov3_cases.ros.messages import apriltag_message
 from dinov3_cases.geometry.depth_sync import matched_inputs
-from dinov3_cases.inference.sam3_roi import validate_roi
+from dinov3_cases.live_state import InferenceUnavailable
+from dinov3_cases.inference.sam3_roi import DEFAULT_ROI, filter_roi, roi_bounds, validate_roi
 from dinov3_cases.api.image_stream import ImageStream
 from dinov3_cases.ros.messages import bboxes3d_message
-from dinov3_cases.api.web import create_app
+from dinov3_cases.api.routes import create_app
 from dinov3_cases.api.visualization import render_display_overlay
 from dinov3_cases.ros.messages import recognition_message
 
 
-class CaseNode(Node):
+class FewShotDetectionNode(Node):
     def __init__(self):
         super().__init__("dinov3_cases")
         self.readiness_lock = threading.Lock()
@@ -64,8 +67,8 @@ class CaseNode(Node):
         if opencv_threads > 0:
             cv2.setNumThreads(opencv_threads)
         self.bbox_smoother = BBoxSmoother(self.param("bbox_smoothing_seconds"))
-        self.root = Path(self.param("cases_dir")).expanduser().resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.gallery_dir = Path(self.param("cases_dir")).expanduser().resolve()
+        self.gallery_dir.mkdir(parents=True, exist_ok=True)
         self.bridge = CvBridge()
         self.lock = threading.Lock()
         self.image_changed = threading.Event()
@@ -84,7 +87,7 @@ class CaseNode(Node):
         self.pending_publication = None
         self.publish_changed = threading.Event()
         self.stop = threading.Event()
-        self.selected = ""
+        self.selected_class = ""
         self.generation = 0
         self.source = "camera"
         self.frame = None
@@ -121,6 +124,13 @@ class CaseNode(Node):
             QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1,
                        reliability=ReliabilityPolicy.RELIABLE),
         )
+        try:
+            self._start_workers()
+        except BaseException:
+            self.destroy_node()
+            raise
+
+    def _start_workers(self):
         self.image_stream = ImageStream(
             self.bridge, wake=self.render_changed.set,
             on_error=lambda error: self.get_logger().error(f"JPEG stream failed: {error}"),
@@ -143,7 +153,8 @@ class CaseNode(Node):
             )
         self.app = create_app(self)
         self.server = make_server(self.param("host"), self.param("port"), self.app, threaded=True)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.server_worker = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server_worker.start()
         self.image_publisher_worker = threading.Thread(target=self.run_image_publications, daemon=True)
         self.image_publisher_worker.start()
         self.publisher_worker = threading.Thread(target=self.run_publications, daemon=True)
@@ -213,7 +224,7 @@ class CaseNode(Node):
             )
 
     def estimate_bboxes3d(self, detections, inputs):
-        self.platform_pipeline.estimate_bboxes3d(self, detections, inputs)
+        estimate_bboxes3d(self.bridge, self.param, self.platform_pipeline, detections, inputs)
 
     def worker_ticks(self):
         """Wake on input and periodically recheck non-image changes."""
@@ -223,6 +234,46 @@ class CaseNode(Node):
             if self.stop.is_set():
                 return
             yield
+
+    def capture_camera(self, prompt, box_threshold=None):
+        with self.lock:
+            detector = getattr(self, "grounding_detector", None)
+            frame = self.camera_frame
+            received_at = self.camera_received_at
+            settings = dict(self.grounding_settings)
+            region = getattr(self, "sam3_roi", DEFAULT_ROI)
+        if detector is None:
+            raise InferenceUnavailable("SAM3 is loading. Please try again shortly.")
+        if frame is None or received_at is None or time.monotonic() - received_at >= 3:
+            raise InferenceUnavailable("The camera is disconnected or its frame is stale. Check the camera feed.")
+        detector.validate_prompt(prompt)
+        image = Image.fromarray(self.bridge.imgmsg_to_cv2(frame, desired_encoding="rgb8")).copy()
+        proposals = detector.detect(
+            image, prompt, settings["box_threshold"] if box_threshold is None else box_threshold,
+            self.param("grounding_max_detections"),
+            min_width=self.param("grounding_min_bbox_width"),
+            min_height=self.param("grounding_min_bbox_height"),
+            min_area=self.param("grounding_min_bbox_area"),
+            containment_threshold=self.param("grounding_containment_threshold"),
+        )
+        bounds = roi_bounds(*image.size, region) if region[:2] != (0, 0) else None
+        return image, filter_roi(proposals, bounds)
+
+    def queue_outputs(self, shared_frame, detections, header, gen, seq,
+                      bbox3d_info, received_at, completed_at):
+        """Caller holds self.lock and owns the input lease. Publication uses metadata.
+        Retain one lease for rendering. Replacement releases the queued lease;
+        the renderer releases a consumed lease, and shutdown releases any remainder.
+        """
+        self.pending_publication = (detections, header, gen)
+        self.pending_publication_timing = dict(
+            frame_id=seq, received_at=received_at, completed_at=completed_at)
+        if self.pending_render is not None:
+            self.pending_render[0].release()
+        self.pending_render = (shared_frame.retain(), detections, header, gen,
+                               seq, bbox3d_info, completed_at)
+        self.render_changed.set()
+        self.publish_changed.set()
 
     def run_publications(self):
         """DDS output cannot stall inference; pending output is a single latest slot."""
@@ -407,12 +458,24 @@ class CaseNode(Node):
 
     def destroy_node(self):
         self.stop.set()
-        self.close_grounding_worker()
-        self.image_stream.close()
+        self.image_changed.set()
+        self.publish_changed.set()
         self.render_changed.set()
         self.annotated_image_changed.set()
-        self.image_publisher_worker.join(timeout=3)
-        self.renderer_worker.join(timeout=3)
+        server_worker = getattr(self, "server_worker", None)
+        if server_worker is not None and server_worker.is_alive():
+            self.server.shutdown()
+            server_worker.join()
+        if hasattr(self, "server"):
+            self.server.server_close()
+        self.close_grounding_worker()
+        if hasattr(self, "image_stream"):
+            self.image_stream.close()
+        for name, timeout in (("worker", 10), ("publisher_worker", 2),
+                              ("image_publisher_worker", 3), ("renderer_worker", 3)):
+            worker = getattr(self, name, None)
+            if worker is not None and worker.is_alive():
+                worker.join(timeout)
         with self.lock:
             if self.pending_render is not None:
                 self.pending_render[0].release()
@@ -437,22 +500,12 @@ class CaseNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = CaseNode()
+    node = FewShotDetectionNode()
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.stop.set()
-        node.image_changed.set()
-        node.publish_changed.set()
-        node.render_changed.set()
-        node.server.shutdown()
-        node.close_grounding_worker()
-        node.worker.join(timeout=10)
-        node.publisher_worker.join(timeout=2)
-        node.image_stream.close()
-        node.renderer_worker.join(timeout=3)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

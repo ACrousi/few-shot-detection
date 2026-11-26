@@ -6,9 +6,9 @@ from robotic_inference.configuration import read_yaml
 
 
 class Pipeline:
-    def __init__(self, config_path):
+    def __init__(self, config_path, *, config=None):
         self.config_path = Path(config_path).resolve()
-        self.config = read_yaml(self.config_path)
+        self.config = read_yaml(self.config_path) if config is None else config
         p = self.config
         if set(p) != {'platform', 'pipeline', 'models', 'operations', 'execution'}:
             raise ValueError('NVIDIA config requires platform, pipeline, models, operations, execution')
@@ -46,11 +46,11 @@ class Pipeline:
             return
         try:
             from .encoder import Encoder
-            from .recognition import ObjectGallery
+            from .gallery_matching import ObjectGallery
             self.encoder=Encoder(self.config['models']['cat2real']['artifact'],roi_backend=self.config['operations']['roi'])
             e=self.config['execution']
             if e['sam3']=='subprocess':
-                from .transport import SharedMemoryGroundingDetector
+                from .sam3_worker import SharedMemoryGroundingDetector
                 self.detector=SharedMemoryGroundingDetector(self.config['models']['sam3']['artifact'],self.encoder.device,
                     python=e.get('python',sys.executable),timeout=e.get('timeout',60.))
             else:
@@ -72,12 +72,8 @@ class Pipeline:
     def run_live(self, node):
         if self.config['execution']['sam3'] != 'subprocess':
             raise ValueError('NVIDIA live frame leases currently require subprocess transport')
-        from .live import run
-        run(node,self)
-
-    def estimate_bboxes3d(self,node,detections,inputs):
-        from .depth import estimate_bboxes3d
-        return estimate_bboxes3d(node,self,detections,inputs)
+        from .live_inference import run_live_inference
+        run_live_inference(node, self)
 
     def configure(self,settings):
         self.settings=dict(settings)
@@ -87,7 +83,7 @@ class Pipeline:
         self.load_models()
         if self.settings is None:
             raise RuntimeError('Configure application settings before inference')
-        from .recognition import recognize_objects
+        from .gallery_matching import recognize_objects
         from dinov3_cases.runtime import INPUT_SIZE
         image=image.convert('RGB')
         if image.width*image.height>25_000_000:
@@ -104,9 +100,6 @@ class Pipeline:
                 raise ValueError(f'{name}: missing model artifact or metadata: {p}')
         if require_runtime:
             self.load_models()
-            if 'cuda' in self.config['operations'].values():
-                from .geometry import library
-                library()
         return dict(platform='nvidia',artifacts='present',models_loaded=require_runtime,inference_verified=False)
 
     def reference_preview(self,image,stride=None):

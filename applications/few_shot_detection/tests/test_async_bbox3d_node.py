@@ -11,7 +11,7 @@ from std_msgs.msg import Header
 
 from dinov3_cases.geometry.async_bbox3d import AsyncBBox3D
 from dinov3_cases.frame_pool import SharedFramePool
-from dinov3_cases.ros.node import CaseNode
+from dinov3_cases.ros.node import FewShotDetectionNode
 from dinov3_cases.tracking.identities import BBoxSmoother
 
 
@@ -47,7 +47,7 @@ def test_node_submits_each_rgb_independently_of_grounding(tmp_path, grounding_in
     from dinov3_cases.timing import ModelTimings
     node = SimpleNamespace(set_readiness=Mock(), readiness_lock=threading.Lock(),
         readiness=dict(state="ready"), model_timings=ModelTimings(),
-        lock=threading.Lock(), generation=0, source='camera', root=tmp_path,
+        lock=threading.Lock(), generation=0, source='camera', gallery_dir=tmp_path,
         frame=Image(width=100, height=80, header=Header(frame_id='camera')), frame_seq=1,
         camera_received_at=time.monotonic(), stop=threading.Event(), image_changed=threading.Event(),
         frame_pool=SharedFramePool(), bbox3d_worker=boxes, bbox_smoother=BBoxSmoother(1),
@@ -60,7 +60,8 @@ def test_node_submits_each_rgb_independently_of_grounding(tmp_path, grounding_in
     )
     node.bridge.imgmsg_to_cv2.return_value = pixels
     node.depth_inputs_for = lambda frame: (node.frame_seq, 'calibration')
-    node.acquire_input_frame = lambda *a, **kw: CaseNode.acquire_input_frame(node, *a, **kw)
+    node.queue_outputs = FewShotDetectionNode.queue_outputs.__get__(node)
+    node.acquire_input_frame = lambda *a, **kw: FewShotDetectionNode.acquire_input_frame(node, *a, **kw)
     observed = []
 
     def ticks():
@@ -78,11 +79,11 @@ def test_node_submits_each_rgb_independently_of_grounding(tmp_path, grounding_in
     encoder = Mock(description='test', device='cpu', model=object())
     try:
         with patch('dinov3_cases.platforms.nvidia.encoder.Encoder', return_value=encoder), \
-                patch('dinov3_cases.platforms.nvidia.live.feature_stride', return_value=16), \
-                patch('dinov3_cases.platforms.nvidia.transport.SharedMemoryGroundingDetector'), \
-                patch('dinov3_cases.platforms.nvidia.recognition.ObjectGallery'), \
-                patch('dinov3_cases.platforms.nvidia.live.AsyncProposals', return_value=scheduler):
-            CaseNode.run_grounded_worker(node)
+                patch('dinov3_cases.platforms.nvidia.live_inference.feature_stride', return_value=16), \
+                patch('dinov3_cases.platforms.nvidia.sam3_worker.SharedMemoryGroundingDetector'), \
+                patch('dinov3_cases.platforms.nvidia.gallery_matching.ObjectGallery'), \
+                patch('dinov3_cases.platforms.nvidia.live_inference.AsyncProposals', return_value=scheduler):
+            FewShotDetectionNode.run_grounded_worker(node)
         assert len(observed) == 12
         assert measured == [(1, 'calibration')]
         node.get_logger.return_value.error.assert_not_called()
@@ -129,7 +130,7 @@ def coalescing_node(tmp_path):
     from dinov3_cases.timing import ModelTimings
     node = SimpleNamespace(set_readiness=Mock(), readiness_lock=threading.Lock(),
         readiness=dict(state="ready"), model_timings=ModelTimings(),
-        lock=threading.Lock(), generation=0, source='camera', root=tmp_path,
+        lock=threading.Lock(), generation=0, source='camera', gallery_dir=tmp_path,
         frame=Image(width=100, height=80, header=Header(frame_id='camera')), frame_seq=1,
         camera_received_at=time.monotonic(), frame_pool=SharedFramePool(),
         bbox3d_worker=boxes, bbox_smoother=BBoxSmoother(1), bridge=Mock(),
@@ -142,17 +143,18 @@ def coalescing_node(tmp_path):
                                 recognition_threshold=.8, margin=.05))
     node.bridge.imgmsg_to_cv2.return_value = pixels
     node.depth_inputs_for = Mock(return_value=(object(), None))
-    node.acquire_input_frame = Mock(side_effect=lambda *a, **kw: CaseNode.acquire_input_frame(node, *a, **kw))
+    node.queue_outputs = FewShotDetectionNode.queue_outputs.__get__(node)
+    node.acquire_input_frame = Mock(side_effect=lambda *a, **kw: FewShotDetectionNode.acquire_input_frame(node, *a, **kw))
     encoder = Mock(description='test', device='cpu', model=object())
 
     def run(ticks):
         node.worker_ticks = ticks
         with patch('dinov3_cases.platforms.nvidia.encoder.Encoder', return_value=encoder), \
-                patch('dinov3_cases.platforms.nvidia.live.feature_stride', return_value=16), \
-                patch('dinov3_cases.platforms.nvidia.transport.SharedMemoryGroundingDetector'), \
-                patch('dinov3_cases.platforms.nvidia.recognition.ObjectGallery'), \
-                patch('dinov3_cases.platforms.nvidia.live.AsyncProposals', return_value=scheduler):
-            CaseNode.run_grounded_worker(node)
+                patch('dinov3_cases.platforms.nvidia.live_inference.feature_stride', return_value=16), \
+                patch('dinov3_cases.platforms.nvidia.sam3_worker.SharedMemoryGroundingDetector'), \
+                patch('dinov3_cases.platforms.nvidia.gallery_matching.ObjectGallery'), \
+                patch('dinov3_cases.platforms.nvidia.live_inference.AsyncProposals', return_value=scheduler):
+            FewShotDetectionNode.run_grounded_worker(node)
         node.get_logger.return_value.error.assert_not_called()
 
     try:
@@ -258,7 +260,7 @@ def test_paused_camera_flushes_background_once_without_counting_an_extra_rgb(coa
         assert scheduler.update.call_count == 2
         assert node.performance['completed_at'] == completed
 
-    with patch('dinov3_cases.platforms.nvidia.live.ResultRate', return_value=rate), \
+    with patch('dinov3_cases.platforms.nvidia.live_inference.ResultRate', return_value=rate), \
             patch.object(rate, 'update', wraps=rate.update) as count:
         run(ticks)
     assert count.call_count == 1

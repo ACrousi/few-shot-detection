@@ -1,0 +1,10 @@
+# Source after ROS setup, when using ROS. All entry points use this checkout.
+app_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_dir="$(cd -- "$app_dir/../.." && pwd)"
+export VIRTUAL_ENV="${DINOV3_VENV:-$app_dir/.venv}"
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+export PYTHONPATH="$app_dir/src:$app_dir/src/dinov3_cases:$repo_dir/packages/robotic_inference_sdk/src:$repo_dir/tools/rsctl/src${PYTHONPATH:+:$PYTHONPATH}"
+export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib/python3.12/site-packages/tensorrt_libs:/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"

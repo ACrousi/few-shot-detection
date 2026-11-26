@@ -37,9 +37,9 @@ bash applications/few_shot_detection/run.sh --ros-args -p port:=8091
 bash applications/few_shot_detection/setup_all.sh
 ```
 
-`setup_all.sh` 先呼叫 `setup_env.sh`，再檢查 OpenCV KCF，最後建置 CUDA geometry。入口不下載或建置模型。
+`setup_all.sh` 先呼叫 `setup_env.sh`，再檢查 OpenCV KCF；不再建置自訂 CUDA 函式庫。入口不下載或建置模型。
 
-個別維護可執行 `bash applications/few_shot_detection/setup_env.sh`；原生編譯使用 `bash applications/few_shot_detection/native/build.sh`。
+個別維護可執行 `bash applications/few_shot_detection/setup_env.sh`。GPU ROI 使用預編譯 PyTorch CUDA wheel，不需另外編譯。
 
 `setup_env.sh` 先安裝 CUDA 13.0 Torch／torchvision，再使用 [constraints-thor.txt](constraints-thor.txt) 安裝 [requirements.txt](requirements.txt)。可透過 `PYTHON_BIN`、`DINOV3_VENV` 指定 Python 與環境位置。
 
@@ -77,22 +77,11 @@ Cat2Real 在 Thor 固定使用 FP32，避免 FP16 非有限輸出。SAM3 只編�
 
 ## GPU 延遲優化
 
-SAM3 使用 GPU 前處理，DINO 在同一影格內批次處理 ROI，再以矩陣比對圖庫。3D 框使用 CPU 深度連通區與 Open3D 凸包 OBB。`bbox3d_quantile` 目前部署值為 `0.07`。
+SAM3 使用 GPU 前處理，DINO 在同一影格內批次處理 ROI，再以矩陣比對圖庫。3D 框使用 CPU 深度連通區與 Open3D CPU RANSAC 平面擬合。`bbox3d_quantile` 目前部署值為 `0.07`。
 
-在 Thor / CUDA 13 上，從工作區根目錄建置原生程式：
+GPU ROI 透過 PyTorch CUDA 切片、置中白色補邊與雙線性縮放，輸出 uint8 NHWC，再交給既有批次正規化與模型。無需 `nvcc`、CMake 或自訂 `.so`；平面擬合沿用 Open3D CPU。
 
-```bash
-bash applications/few_shot_detection/native/build.sh
-
-# 只建置個別 target（自動更新相依的 CUDA 函式庫）
-bash applications/few_shot_detection/native/build.sh gpu_geometry
-```
-
-需要 CUDA 開發工具、`cmake`（3.24 以上）與 `g++`。預設 `CUDA_ARCH=110`，其他 GPU 可覆寫 `CUDA_ARCH`。
-
-CMake 建置快取預設放在 `applications/few_shot_detection/build/native`，可用 `NATIVE_BUILD_DIR` 覆寫；產物放在 `artifacts/cuda`。
-
-Docker 安裝編譯依賴後建置 CUDA geometry，以 `cmake --install` 安裝共用函式庫。
+Compose 使用 `deployment/docker/Dockerfile.isaac-ros`，沿用 Isaac ROS base image，不再安裝或編譯 CUDA geometry。
 
 另建並驗證模型，不覆蓋原有單筆引擎：
 

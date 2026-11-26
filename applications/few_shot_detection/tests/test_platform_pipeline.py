@@ -64,7 +64,7 @@ def test_partial_model_load_failure_cleans_encoder(monkeypatch):
     from unittest.mock import Mock
     monkeypatch.setattr('dinov3_cases.platforms.nvidia.encoder.Encoder',lambda *a,**k:Mock(device='cuda'))
     def fail(*args,**kwargs): raise RuntimeError('worker failed')
-    monkeypatch.setattr('dinov3_cases.platforms.nvidia.transport.SharedMemoryGroundingDetector',fail)
+    monkeypatch.setattr('dinov3_cases.platforms.nvidia.sam3_worker.SharedMemoryGroundingDetector',fail)
     pipeline=load_pipeline('config/platforms/nvidia.yaml')
     with pytest.raises(RuntimeError,match='worker failed'): pipeline.load_models()
     assert pipeline.closed and pipeline.encoder is None and pipeline.detector is None

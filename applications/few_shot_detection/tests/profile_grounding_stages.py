@@ -5,9 +5,9 @@ from pathlib import Path
 import time
 import numpy as np
 from PIL import Image
-from dinov3_cases.platforms.nvidia.recognition import DEFAULT_PROMPT
+from dinov3_cases.platforms.nvidia.gallery_matching import DEFAULT_PROMPT
 from dinov3_cases.platforms.nvidia.artifacts import GROUNDING_ENGINE, GROUNDING_PYTHON
-from dinov3_cases.platforms.nvidia.transport import SharedMemoryGroundingDetector
+from dinov3_cases.platforms.nvidia.sam3_worker import SharedMemoryGroundingDetector
 
 
 def main():

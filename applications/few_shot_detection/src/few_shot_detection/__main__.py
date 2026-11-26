@@ -11,10 +11,10 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     from dinov3_cases.runtime import PROJECT
-    from few_shot_detection.pipeline import open_pipeline, load_settings
+    from few_shot_detection.standalone import open_pipeline, read_settings
     from dinov3_cases.recognition.settings import validate_settings
     from PIL import Image, ImageOps
-    settings = load_settings(args.config or PROJECT / "config/native.yaml")
+    settings = read_settings(args.config or PROJECT / "config/native.yaml")
     if args.prompt is not None:
         settings["prompt"] = validate_settings(args.prompt, settings["box_threshold"], settings["recognition_threshold"], 0)
     with Image.open(args.image) as source:

@@ -8,7 +8,7 @@ import pytest
 from sensor_msgs.msg import Image
 
 from dinov3_cases.inference.sam3_roi import DEFAULT_ROI, filter_roi, roi_bounds, validate_roi
-from dinov3_cases.api.web import create_app
+from dinov3_cases.api.routes import create_app
 
 
 @pytest.mark.parametrize('region,expected', [
@@ -42,7 +42,7 @@ def test_entire_box_must_be_inside_and_coordinates_are_unchanged():
 
 @pytest.fixture
 def api(tmp_path):
-    node = SimpleNamespace(root=tmp_path, lock=threading.Lock(), generation=7,
+    node = SimpleNamespace(gallery_dir=tmp_path, capture_camera=Mock(), lock=threading.Lock(), generation=7,
                            sam3_roi=DEFAULT_ROI, camera_frame=Image(width=1920, height=1080),
                            image_changed=threading.Event(), render_changed=threading.Event(),
                            image_stream=Mock(), clear_object_debug=Mock())

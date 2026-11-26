@@ -30,7 +30,7 @@ def main():
         setattr(cls, method, wrapper)
     timed(pipeline.Encoder, 'encode', 'roi_encode_ms')
     timed(TRTBackbone, '__call__', 'dinov3_trt_ms')
-    class ProfileNode(pipeline.CaseNode):
+    class ProfileNode(pipeline.FewShotDetectionNode):
         @property
         def performance(self):
             return self._performance
@@ -112,15 +112,6 @@ def main():
         args.output.write_text(json.dumps(report, indent=2)+'\n')
         print(json.dumps(summary, indent=2), flush=True)
     finally:
-        node.stop.set()
-        node.image_changed.set()
-        node.publish_changed.set()
-        node.render_changed.set()
-        node.server.shutdown()
-        node.worker.join(15)
-        node.close_grounding_worker()
-        node.publisher_worker.join(3)
-        node.renderer_worker.join(3)
         node.destroy_node()
         rclpy.shutdown()
 

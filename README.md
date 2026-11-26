@@ -4,6 +4,16 @@
 `isaac_ros-dev/dinov3_ws` 的 SAM3 + Cat2Real few-shot 辨識、CPU KCF 追蹤、RGB-D 3D 框、ROS 2 與 HTTP/MJPEG。
 共用 SDK 與 rsctl 不包含本應用的模型或任務規則。正式推論使用應用既有 Torch-TensorRT runtime；沒有 mock 或自動 CPU fallback。
 
+| 入口 | 用途 |
+|---|---|
+| `./start.sh` | 在 host 啟動開發容器 |
+| `./run_camera.sh` | 發布 RGB-D 相機資料 |
+| `./run.sh` | 啟動 ROS 即時辨識、追蹤、3D 框與 Web |
+| `./infer.sh` | 單張影像推論並輸出 JSON |
+| `./verify.sh` | 執行回歸測試，加上 `--hardware` 可驗證 NVIDIA 執行路徑 |
+
+推論與測試入口共用 application 的 `runtime_env.sh`，預設使用同一份 checkout 的原始碼與 `.venv`。可透過 `DINOV3_VENV` 指定已安裝依賴的 Python 環境。
+
 ## 目前這台機器直接執行
 
 ```bash

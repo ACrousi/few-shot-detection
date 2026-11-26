@@ -1,16 +1,13 @@
-"""HTTP routes for the shared recognition node; inference stays in node.py."""
+"""HTTP routes for live recognition controls, results, and gallery management."""
 
 import time
 from io import BytesIO
 from flask import Flask, jsonify, request, Response, render_template
 from PIL import Image
-from werkzeug.exceptions import ServiceUnavailable
 from dinov3_cases.runtime import MODEL_ID, GROUNDING_MODEL_ID, INPUT_SIZE
-from dinov3_cases.recognition.settings import validate_settings
-from dinov3_cases.tracking.kcf import check_kcf
 from dinov3_cases.api.image_manager import register_image_manager
-from dinov3_cases.inference.sam3_roi import DEFAULT_ROI, validate_roi, roi_bounds, filter_roi
-from dinov3_cases.recognition import recognition_state
+from dinov3_cases.inference.sam3_roi import DEFAULT_ROI, validate_roi, roi_bounds
+from dinov3_cases import live_state
 from dinov3_cases.recognition.gallery_files import group_path as case_path, image_path, load_image, gallery_groups, gallery_images, save_image
 
 
@@ -27,41 +24,17 @@ def create_app(node):
 
     def images_changed(group):
         with node.lock:
-            recognition_state.gallery_changed(node)
+            live_state.gallery_changed(node)
 
-    def capture_camera(prompt, box_threshold=None):
-        with node.lock:
-            detector = getattr(node, "grounding_detector", None)
-            frame = node.camera_frame
-            received_at = node.camera_received_at
-            settings = dict(node.grounding_settings)
-            region = getattr(node, "sam3_roi", DEFAULT_ROI)
-        if detector is None:
-            raise ServiceUnavailable("SAM3 is loading. Please try again shortly.")
-        if frame is None or received_at is None or time.monotonic() - received_at >= 3:
-            raise ServiceUnavailable("The camera is disconnected or its frame is stale. Check the camera feed.")
-        detector.validate_prompt(prompt)
-        image = Image.fromarray(node.bridge.imgmsg_to_cv2(frame, desired_encoding="rgb8")).copy()
-        proposals = detector.detect(
-            image, prompt, settings["box_threshold"] if box_threshold is None else box_threshold,
-            node.param("grounding_max_detections"),
-            min_width=node.param("grounding_min_bbox_width"),
-            min_height=node.param("grounding_min_bbox_height"),
-            min_area=node.param("grounding_min_bbox_area"),
-            containment_threshold=node.param("grounding_containment_threshold"),
-        )
-        bounds = roi_bounds(*image.size, region) if region[:2] != (0, 0) else None
-        return image, filter_roi(proposals, bounds)
-
-    @app.errorhandler(503)
+    @app.errorhandler(live_state.InferenceUnavailable)
     def unavailable(error):
-        return jsonify(error=error.description), 503
+        return jsonify(error=str(error)), 503
 
     def capture_threshold():
         with node.lock:
             return node.grounding_settings["box_threshold"]
 
-    register_image_manager(app, node.root, images_changed, capture=capture_camera,
+    register_image_manager(app, node.gallery_dir, images_changed, capture=node.capture_camera,
                            capture_threshold=capture_threshold)
 
     @app.errorhandler(ValueError)
@@ -75,7 +48,7 @@ def create_app(node):
 
     @app.get("/api/status")
     def status():
-        cases = [path.name for path in gallery_groups(node.root)]
+        cases = [path.name for path in gallery_groups(node.gallery_dir)]
         with node.lock:
             age = (
                 None
@@ -89,7 +62,7 @@ def create_app(node):
             return jsonify(
                 **platform_status,
                 cases=cases,
-                selected=node.selected,
+                selected=node.selected_class,
                 source=node.source,
                 status=node.status,
                 performance=node.performance,
@@ -129,7 +102,7 @@ def create_app(node):
     @app.get("/api/references")
     def references():
         name = request.args.get("case", "")
-        folder = case_path(node.root, name)
+        folder = case_path(node.gallery_dir, name)
         if not folder.is_dir():
             raise ValueError("Case does not exist.")
         with node.lock:
@@ -155,7 +128,7 @@ def create_app(node):
 
     @app.get("/api/references/grid/<group>/<filename>")
     def reference_grid(group, filename):
-        path = image_path(node.root, group, filename)
+        path = image_path(node.gallery_dir, group, filename)
         with node.lock:
             stride = node.reference_stride
         if stride is None:
@@ -177,15 +150,7 @@ def create_app(node):
         ):
             raise ValueError("Expected prompt, detection_interval and/or grounding/recognition thresholds.")
         with node.lock:
-            settings = {**node.grounding_settings, **payload}
-            settings["prompt"] = validate_settings(**settings)
-            check_kcf()
-            detector = getattr(node, "grounding_detector", None)
-            if detector is None and "prompt" in payload:
-                return jsonify(error="SAM3 is loading. Please try again once it is ready."), 503
-            if detector is not None:
-                detector.validate_prompt(settings["prompt"])
-            recognition_state.set_grounding_settings(node, settings)
+            settings = live_state.set_grounding_settings(node, payload)
         return jsonify(ok=True, grounding=settings)
 
     def region_state():
@@ -212,14 +177,14 @@ def create_app(node):
         with node.lock:
             previous = getattr(node, "sam3_roi", DEFAULT_ROI)
             region = validate_roi(*(payload.get(key, old) for key, old in zip(keys, previous)))
-            recognition_state.set_region(node, region, previous)
+            live_state.set_region(node, region, previous)
             state = region_state()
         return jsonify(state)
 
     @app.post("/api/cases")
     def upload():
-        name = request.form.get("case", "")
-        folder = case_path(node.root, name)
+        selected_class = request.form.get("case", "")
+        folder = case_path(node.gallery_dir, selected_class)
         files = request.files.getlist("images")
         if not files:
             raise ValueError("Choose at least one picture.")
@@ -230,17 +195,17 @@ def create_app(node):
             dest = folder / f"{time.time_ns()}_{i}.png"
             save_image(image, dest)
         with node.lock:
-            recognition_state.select_case(node, name, rebuild=True)
+            live_state.select_class(node, selected_class, rebuild=True)
         return jsonify(ok=True, count=len(images))
 
     @app.post("/api/select")
     def select():
-        name = (request.get_json(silent=True) or {}).get("case", "")
-        folder = case_path(node.root, name)
+        selected_class = (request.get_json(silent=True) or {}).get("case", "")
+        folder = case_path(node.gallery_dir, selected_class)
         if not folder.is_dir():
             raise ValueError("Case does not exist.")
         with node.lock:
-            recognition_state.select_case(node, name)
+            live_state.select_class(node, selected_class)
         return jsonify(ok=True)
 
     @app.post("/api/source")
@@ -254,7 +219,7 @@ def create_app(node):
                 raise ValueError("Choose a target picture.")
             image = load_image(request.files["image"].stream, mode="RGB")
         with node.lock:
-            recognition_state.set_source(node, mode, image)
+            live_state.set_source(node, mode, image)
         return jsonify(ok=True)
 
     @app.get("/image_annotated.mjpg")

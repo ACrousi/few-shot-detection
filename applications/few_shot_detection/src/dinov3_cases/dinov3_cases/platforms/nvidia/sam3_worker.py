@@ -49,7 +49,7 @@ class SharedMemoryGroundingDetector:
         *,
         python,
         timeout=60.0,
-        worker_module="dinov3_cases.platforms.nvidia.transport",
+        worker_module="dinov3_cases.platforms.nvidia.sam3_worker",
     ):
         self.lock = threading.RLock()
         self.pool = SharedFramePool()

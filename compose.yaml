@@ -4,8 +4,8 @@ services:
   isaac-ros:
     image: few-shot-detection-kcf:local
     build:
-      context: ./applications/few_shot_detection/native
-      dockerfile: Dockerfile
+      context: ./deployment/docker
+      dockerfile: Dockerfile.isaac-ros
     runtime: nvidia
     network_mode: host
     ipc: host
